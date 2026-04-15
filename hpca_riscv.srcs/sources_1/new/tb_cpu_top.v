@@ -182,6 +182,13 @@ module tb_cpu_top;
         passed = 0;
         failed = 0;
 
+        // Optional: pre-populate data memory from data.hex.
+        // Existing 64-instruction test does its own stores, so
+        // data.hex is unnecessary for it. For C benchmarks, the
+        // build toolchain will emit a data.hex next to the .c file.
+        // A missing file just produces a $readmemh warning -> harmless.
+        $readmemh("data.hex", uut.dmem.mem);
+
         // Setup waveform dump
         $dumpfile("tb_cpu_top.vcd");
         $dumpvars(0, tb_cpu_top);
