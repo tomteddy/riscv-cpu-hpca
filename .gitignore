@@ -19,3 +19,14 @@ xsim.dir/
 # --- Backup Files ---
 *~
 *.bak
+
+# --- C Toolchain Build Outputs ---
+tests/*.elf
+tests/*.dis
+tests/*.instructions.hex
+tests/*.data.hex
+
+# --- Vivado Generated (additional) ---
+*.xsa
+*.runs/
+hpca_riscv.gen/
