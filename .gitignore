@@ -1,0 +1,21 @@
+# --- Vivado Project Junk ---
+hpca_riscv.cache/
+hpca_riscv.hw/
+hpca_riscv.ip_user_files/
+hpca_riscv.sim/
+
+# --- Vivado Run-time Logs & Journals ---
+*.log
+*.jou
+*.str
+*.pb
+.Xil/
+
+# --- Simulation Outputs ---
+*.vcd
+*.wdb
+xsim.dir/
+
+# --- Backup Files ---
+*~
+*.bak

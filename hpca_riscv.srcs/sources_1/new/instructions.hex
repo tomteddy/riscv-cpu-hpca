@@ -1,0 +1,223 @@
+// ============================================================
+// File : instructions.hex
+// Project : RISC-V Single-Cycle CPU
+// Description : Comprehensive test program covering all 47
+//               RV32I instructions. Load into instruction
+//               memory using $readmemh.
+//
+// Each line = one 32-bit instruction in hex
+// Line 0 = address 0x000 (PC=0)
+// Line 1 = address 0x004 (PC=4)
+// etc.
+//
+// PROGRAM STRUCTURE:
+//   Instr  0- 2 : Setup values in x1, x2, x3
+//   Instr  3-12 : R-type instructions (ADD SUB AND OR XOR SLL SRL SRA SLT SLTU)
+//   Instr 13-21 : I-type arithmetic (ADDI SLTI SLTIU ANDI ORI XORI SLLI SRLI SRAI)
+//   Instr 22-23 : LUI and AUIPC
+//   Instr 24-33 : Store and Load (SW LW SH LH SB LB LHU LBU)
+//   Instr 34-55 : Branch instructions (BEQ BNE BLT BGE BLTU BGEU)
+//   Instr 56-62 : JAL and JALR
+//   Instr 63    : NOP
+//
+// EXPECTED FINAL REGISTER VALUES (checked in testbench):
+//   x1  =   5         x2  =   5         x3  =  11 (BEQ taken)
+//   x4  =  22 (BNE)   x5  =  33 (BLT)   x6  =  44 (BGE)
+//   x7  =  55 (BLTU)  x8  =  66 (BGEU)  x9  = 228 (JAL ret)
+//   x10 =  77 (JAL)   x11 = 248          x12 =  88 (JALR)
+//   x13 = 244 (JALR)  x14 = 100          x15 =   1 (SLTI)
+//   x16 =   1 (SLTIU) x17 =   4 (ANDI)  x18 = 111 (ORI)
+//   x19 = 107 (XORI)  x20 = 400 (SLLI)  x21 =  25 (SRLI)
+//   x22 = 0xFFFFFFFF  x23 = 0x00001000  x24 = 0x105C (AUIPC)
+//   x25 =   0          x26 = 171         x27 = 171 (LW)
+//   x28 = 171 (LH)    x29 = 0xFFFFFFAB  x30 = 171 (LHU)
+//   x31 = 171 (LBU)
+//
+// INTERMEDIATE REGISTER VALUES (checked at specific cycles):
+//   After cycle  4: x4  =  15 (ADD  result before BNE overwrites it)
+//   After cycle  5: x5  =   5 (SUB  result before BLT overwrites it)
+//   After cycle  6: x6  =   0 (AND  result before BGE overwrites it)
+//   After cycle  7: x7  =  15 (OR   result before BLTU overwrites it)
+//   After cycle  8: x8  =  15 (XOR  result before BGEU overwrites it)
+//   After cycle  9: x9  = 320 (SLL  result before JAL  overwrites it)
+//   After cycle 10: x10 =  10 (SRL  result before JAL  overwrites it)
+//   After cycle 11: x11 = 0xFFFFFFFF (SRA result before JALR setup overwrites it)
+//   After cycle 12: x12 =   1 (SLT  result before JALR overwrites it)
+//   After cycle 13: x13 =   1 (SLTU result before JALR overwrites it)
+//
+// EXPECTED MEMORY VALUES (checked in testbench):
+//   mem[0] = 0xAB (SW stored 171 = 0xAB at byte address 0)
+//   mem[4] = 0xAB (SH stored halfword 0x00AB at byte address 4)
+//   mem[5] = 0x00
+//   mem[8] = 0xAB (SB stored byte 0xAB at byte address 8)
+// ============================================================
+
+// ----- SETUP (instr 0-2) -----
+// 0: ADDI x1, x0, 10     (x1 = 10)
+00A00093
+// 1: ADDI x2, x0, 5      (x2 = 5)
+00500113
+// 2: ADDI x3, x0, -1     (x3 = -1 = 0xFFFFFFFF)
+FFF00193
+
+// ----- R-TYPE (instr 3-12) -----
+// 3: ADD  x4,  x1, x2    (x4 = 10 + 5 = 15)
+00208233
+// 4: SUB  x5,  x1, x2    (x5 = 10 - 5 = 5)
+402082B3
+// 5: AND  x6,  x1, x2    (x6 = 10 & 5 = 0)
+0020F333
+// 6: OR   x7,  x1, x2    (x7 = 10 | 5 = 15)
+0020E3B3
+// 7: XOR  x8,  x1, x2    (x8 = 10 ^ 5 = 15)
+0020C433
+// 8: SLL  x9,  x1, x2    (x9 = 10 << 5 = 320)
+002094B3
+// 9: SRL  x10, x9, x2    (x10 = 320 >> 5 = 10)
+0024D533
+// 10: SRA  x11, x3, x2   (x11 = -1 >>> 5 = -1, sign preserved)
+4021D5B3
+// 11: SLT  x12, x2, x1   (x12 = (5 < 10 signed) = 1)
+00112633
+// 12: SLTU x13, x2, x1   (x13 = (5 < 10 unsigned) = 1)
+001136B3
+
+// ----- I-TYPE ARITHMETIC (instr 13-21) -----
+// 13: ADDI  x14, x0, 100  (x14 = 100)
+06400713
+// 14: SLTI  x15, x14, 200 (x15 = (100 < 200 signed) = 1)
+0C872793
+// 15: SLTIU x16, x14, 200 (x16 = (100 < 200 unsigned) = 1)
+0C873813
+// 16: ANDI  x17, x14, 15  (x17 = 100 & 15 = 4)
+00F77893
+// 17: ORI   x18, x14, 15  (x18 = 100 | 15 = 111)
+00F76913
+// 18: XORI  x19, x14, 15  (x19 = 100 ^ 15 = 107)
+00F74993
+// 19: SLLI  x20, x14, 2   (x20 = 100 << 2 = 400)
+00271A13
+// 20: SRLI  x21, x14, 2   (x21 = 100 >> 2 = 25)
+00275A93
+// 21: SRAI  x22, x3, 1    (x22 = -1 >>> 1 = -1, sign preserved)
+4011DB13
+
+// ----- LUI and AUIPC (instr 22-23) -----
+// 22: LUI   x23, 1        (x23 = 1 << 12 = 0x00001000 = 4096)
+00001BB7
+// 23: AUIPC x24, 1        (x24 = PC + (1<<12) = 92 + 4096 = 4188 = 0x105C)
+00001C17
+
+// ----- STORE AND LOAD SETUP (instr 24-25) -----
+// 24: ADDI  x25, x0, 0    (x25 = 0, base address for memory tests)
+00000C93
+// 25: ADDI  x26, x0, 171  (x26 = 171 = 0xAB, value to store)
+0AB00D13
+
+// ----- STORE INSTRUCTIONS (instr 26-30) -----
+// 26: SW  x26, 0(x25)     (mem[0..3] = 0x000000AB, little-endian)
+01ACA023
+// 27: LW  x27, 0(x25)     (x27 = mem[0..3] = 171)
+000CAD83
+// 28: SH  x26, 4(x25)     (mem[4..5] = 0x00AB, little-endian)
+01AC9223
+// 29: LH  x28, 4(x25)     (x28 = sign_extend(0x00AB) = 171)
+004C9E03
+// 30: SB  x26, 8(x25)     (mem[8] = 0xAB)
+01AC8423
+// 31: LB  x29, 8(x25)     (x29 = sign_extend(0xAB) = 0xFFFFFFAB = -85)
+008C8E83
+// 32: LHU x30, 4(x25)     (x30 = zero_extend(0x00AB) = 171)
+004CDF03
+// 33: LBU x31, 8(x25)     (x31 = zero_extend(0xAB) = 171)
+008CCF83
+
+// ----- BRANCH SETUP (instr 34) -----
+// 34: ADDI x1, x0, 5      (x1 = 5, x2 already = 5, both equal for BEQ)
+00500093
+
+// ----- BEQ TEST (instr 35-37) -----
+// x1=5, x2=5, they are EQUAL so BEQ is TAKEN
+// BEQ jumps to PC+8 = instr 37, skipping instr 36
+// 35: BEQ  x1, x2, 8      (taken: x1==x2, jump to instr 37)
+00208463
+// 36: ADDI x3, x0, 99     (SKIPPED - if we see x3=99, BEQ failed)
+06300193
+// 37: ADDI x3, x0, 11     (x3 = 11, BEQ branch target)
+00B00193
+
+// ----- BNE TEST (instr 38-39) -----
+// x1=5, x2=5, they are EQUAL so BNE is NOT TAKEN (falls through)
+// 38: BNE  x1, x2, 8      (NOT taken: x1==x2, fall through to instr 39)
+00209463
+// 39: ADDI x4, x0, 22     (x4 = 22, executes because BNE not taken)
+01600213
+
+// ----- BLT TEST (instr 40-43) -----
+// x1=3, x2=5, 3 < 5 signed so BLT is TAKEN
+// 40: ADDI x1, x0, 3      (x1 = 3 for BLT test)
+00300093
+// 41: BLT  x1, x2, 8      (taken: 3 < 5 signed, jump to instr 43)
+0020C463
+// 42: ADDI x5, x0, 99     (SKIPPED - if we see x5=99, BLT failed)
+06300293
+// 43: ADDI x5, x0, 33     (x5 = 33, BLT branch target)
+02100293
+
+// ----- BGE TEST (instr 44-47) -----
+// x1=5, x2=5, 5 >= 5 signed so BGE is TAKEN
+// 44: ADDI x1, x0, 5      (x1 = 5 for BGE test)
+00500093
+// 45: BGE  x1, x2, 8      (taken: 5 >= 5 signed, jump to instr 47)
+0020D463
+// 46: ADDI x6, x0, 99     (SKIPPED - if we see x6=99, BGE failed)
+06300313
+// 47: ADDI x6, x0, 44     (x6 = 44, BGE branch target)
+02C00313
+
+// ----- BLTU TEST (instr 48-51) -----
+// x1=1, x2=5, 1 < 5 unsigned so BLTU is TAKEN
+// 48: ADDI x1, x0, 1      (x1 = 1 for BLTU test)
+00100093
+// 49: BLTU x1, x2, 8      (taken: 1 < 5 unsigned, jump to instr 51)
+0020E463
+// 50: ADDI x7, x0, 99     (SKIPPED - if we see x7=99, BLTU failed)
+06300393
+// 51: ADDI x7, x0, 55     (x7 = 55, BLTU branch target)
+03700393
+
+// ----- BGEU TEST (instr 52-55) -----
+// x1=5, x2=5, 5 >= 5 unsigned so BGEU is TAKEN
+// 52: ADDI x1, x0, 5      (x1 = 5 for BGEU test)
+00500093
+// 53: BGEU x1, x2, 8      (taken: 5 >= 5 unsigned, jump to instr 55)
+0020F463
+// 54: ADDI x8, x0, 99     (SKIPPED - if we see x8=99, BGEU failed)
+06300413
+// 55: ADDI x8, x0, 66     (x8 = 66, BGEU branch target)
+04200413
+
+// ----- JAL TEST (instr 56-58) -----
+// JAL saves PC+4 into x9, jumps to PC+8 (skips instr 57)
+// 56: JAL  x9, 8           (x9 = PC+4 = 228, jump to instr 58)
+008004EF
+// 57: ADDI x10, x0, 99     (SKIPPED - if we see x10=99, JAL failed)
+06300513
+// 58: ADDI x10, x0, 77     (x10 = 77, JAL target)
+04D00513
+
+// ----- JALR TEST (instr 59-62) -----
+// JALR saves PC+4 into x13, jumps to address in x11
+// x11 = 248 = address of instr 62 (62 * 4 = 248)
+// 59: ADDI x11, x0, 248    (x11 = 248, target address for JALR)
+0F800593
+// 60: JALR x13, x11, 0     (x13 = PC+4 = 244, jump to x11+0 = 248 = instr 62)
+000586E7
+// 61: ADDI x12, x0, 99     (SKIPPED - if we see x12=99, JALR failed)
+06300613
+// 62: ADDI x12, x0, 88     (x12 = 88, JALR target)
+05800613
+
+// ----- NOP (instr 63) -----
+// 63: ADDI x0, x0, 0       (NOP, write to x0 is ignored)
+00000013
