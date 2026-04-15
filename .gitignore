@@ -20,6 +20,9 @@ xsim.dir/
 *~
 *.bak
 
+# --- Claude Code Internal ---
+.claude/
+
 # --- C Toolchain Build Outputs ---
 tests/*.elf
 tests/*.dis
