@@ -8,7 +8,7 @@ RV32I CPU implemented in Verilog. Currently **5-stage pipelined**. The roadmap i
 
 **Harvard architecture**: separate instruction and data memories (both 16 KB, byte-addressable). No cache, no DRAM, no OS.
 
-## Current state — Phase 1 complete
+## Current state — Phase 3 complete
 
 ### Phase 0 — Single-cycle (complete, preserved)
 Single-cycle CPU is stabilized. All 47 RV32I instructions verified.
@@ -41,6 +41,70 @@ New files added:
 - Single-cycle: set `tb_cpu_top` as simulation top
 - Pipelined: set `tb_cpu_top_pipeline` as simulation top
 - Both use same `instructions.hex`, same expected results
+
+### Phase 2 — BTB branch prediction (complete, verified)
+16-entry direct-mapped BTB with 2-bit saturating counters in IF stage.
+Correctly-predicted taken branches incur 0-cycle penalty; only mispredicts
+and jumps still flush 2 cycles. **Phase 1 modules unmodified.**
+
+New files added:
+- `btb.v` — 16-entry BTB, indexed by PC[5:2], tag PC[31:6]
+- `cpu_top_pipelined_branch.v` — Phase 2 top-level (based on Phase 1)
+- `tb_cpu_top_pipelined_branch.v` — same 47-instr checks as Phase 1, 160-cycle wait
+
+**Phase 2 design decisions (locked):**
+- BTB only populated by branches (not jumps — jumps still flush 2 cycles)
+- `predicted_taken` propagated through IF→ID→EX via inline registers in the
+  top-level (no changes to Phase 1 pipeline register modules)
+- Flush only on `branch_mispredict = ex_branch && (branch_taken != ex_predicted_taken)`
+- Next-PC priority: EX redirect (mispredict/jump) > BTB predict_taken > PC+4
+- Counter init: `2'b01` (weak not-taken) — conservative cold start
+- **Bug learned:** Verilog creates implicit 1-bit nets for undeclared port
+  connections. BTB instance must be placed *after* its input wires are
+  declared (or forward-declare the wires) — otherwise silent corruption.
+
+### Phase 3 — M extension + ML instructions (complete, verified)
+Single-cycle signed multiplier supporting MUL, MAC, RELU. **First phase
+to modify a Phase 0 module** (`control_unit.v` gained opcode `0001011`).
+
+New instructions:
+| Instr | Opcode    | funct3 | funct7    | Semantics                       |
+|-------|-----------|--------|-----------|---------------------------------|
+| MUL   | `0110011` | `000`  | `0000001` | `rd = (rs1 * rs2)[31:0]`        |
+| MAC   | `0001011` | `000`  | —         | `rd = rs1 + (rs1 * rs2)`        |
+| RELU  | `0001011` | `001`  | —         | `rd = (rs1[31]) ? 0 : rs1`      |
+
+**MAC encoding choice (Option B):** `rd = rs1 + rs1*rs2` — `rd` is a free
+destination, accumulator source is `rs1`. Keeps the 2-port regfile.
+
+New / modified files:
+- `mul_unit.v` — NEW, single-cycle combinational multiplier + MAC + RELU.
+  Vivado infers a DSP48 slice for the 32×32 signed multiply.
+- `control_unit.v` — MODIFIED, added opcode `0001011` (custom-0) case.
+  Sets `reg_write=1`, everything else default. Decode of MAC vs RELU
+  happens in the top-level via `ex_op` (funct3).
+- `cpu_top_mext.v` — NEW, Phase 3 top-level (based on Phase 2).
+- `tb_cpu_top_mext.v` — NEW, self-contained TB; hand-assembles 13
+  instructions and loads them directly into `uut.imem.mem` byte-by-byte
+  (imem is byte-addressed little-endian — don't write 32-bit words to
+  `mem[i]` indices!).
+
+**Phase 3 design decisions (locked):**
+- `ex_op[1:0]` decoded in ID (`01`=MUL, `10`=MAC, `11`=RELU, `00`=ALU).
+  Propagated through ID/EX via inline register in the top-level (id_ex_reg
+  module unchanged).
+- EX stage result mux: `(ex_op == 00) ? ex_alu_result : ex_mul_result`.
+  The muxed value is written into EX/MEM's `alu_result` slot so forwarding
+  (which keys off `mem_rd`/`wb_rd`) handles MUL/MAC/RELU writes with
+  zero changes to `forwarding_unit`.
+- Branch unit still reads `ex_alu_result` (un-muxed) — branches never
+  care about the mul_unit path.
+
+**Switching between phases:**
+- Phase 0 (single-cycle):  `tb_cpu_top`
+- Phase 1 (5-stage):       `tb_cpu_top_pipeline`
+- Phase 2 (+BTB):          `tb_cpu_top_pipelined_branch`
+- Phase 3 (+MUL/MAC/RELU): `tb_cpu_top_mext`
 
 ## Development Environment
 
@@ -131,19 +195,20 @@ PC → imem → [instruction fields]
 
 - **Phase 0** ✅ Single-cycle RV32I, all 47 instructions (`cpu_top.v`)
 - **Phase 1** ✅ 5-stage pipeline, forwarding, load-use stall, branch flush (`cpu_top_pipeline.v`)
-- **Phase 2** ⬅ *next*: BTB + 2-bit saturating predictor in IF stage
-- **Phase 3**: M extension (MUL), then custom ML instructions (MAC, ReLU) in opcode `0001011`
-- **Phase 4**: Cycle counter (`RDCYC` custom instr), C benchmarks (matmul, ReLU, fib), report
+- **Phase 2** ✅ 16-entry BTB + 2-bit saturating predictor (`cpu_top_pipelined_branch.v`)
+- **Phase 3** ✅ M extension (MUL) + custom ML (MAC, ReLU) (`cpu_top_mext.v`)
+- **Phase 4** ⬅ *next*: Cycle counter (`RDCYC` custom instr), C benchmarks (matmul, ReLU, fib), report
 
 **Locked architectural decisions:**
 - Branch resolves in EX (2-cycle flush penalty on mispredict)
-- Each phase adds a new top-level file; Phase 0 modules only modified in Phase 3 (ISA extension)
-- MAC encoding: `rs1 += rs1 * rs2` (no third regfile port needed)
+- Each phase adds a new top-level file; Phase 0 modules only modified for ISA extensions (`control_unit.v` updated in Phase 3)
+- MAC encoding (Option B): `rd = rs1 + rs1*rs2` — `rd` is free, only 2 regfile reads
 
-**Phase 2 design notes (for next session):**
-- BTB sits in IF stage, indexed by PC bits
-- 2-bit saturating counter per BTB entry: 00=strong-not-taken, 01=weak-not-taken, 10=weak-taken, 11=strong-taken
-- On BTB hit + predict taken: PC jumps to BTB target immediately in IF (0-cycle penalty)
-- On mispredict (resolved in EX): flush IF+ID, update BTB entry and counter
-- On BTB miss: fall through to current always-not-taken behavior
-- New files expected: `btb.v`, updated `cpu_top_pipeline.v` or new `cpu_top_pipeline2.v`
+**Phase 4 design notes (for next session):**
+- `RDCYC rd` reads a 32-bit free-running cycle counter into `rd`
+- Counter increments every clock after reset
+- Use opcode `0001011` (custom-0) with a new funct3 (e.g. `010`) to
+  avoid colliding with MAC (`000`) and RELU (`001`)
+- Decode in ID as another `ex_op` value, or widen `ex_op` to 3 bits;
+  result mux in EX selects the counter register
+- Deferred: C benchmarks and performance report (need Vivado runs)

@@ -9,6 +9,11 @@
 //   0010111 AUIPC       1101111 JAL
 //   1100111 JALR
 //
+// Phase 3 additions:
+//   0001011 custom-0 (MAC, RELU — funct3 picks; result from mul_unit)
+//   MUL is opcode 0110011 with funct7=0000001 (same path as R-type,
+//   selected in EX by mul_unit mux in top-level, not here)
+//
 // Signal meanings:
 //   alu_a_sel : 00=rs1  01=PC  10=zero
 //   alu_src   :  0=rs2  1=imm
@@ -73,6 +78,12 @@ module control_unit (
             7'b1100111: begin                                  // JALR
                 reg_write = 1'b1; alu_src = 1'b1;
                 wb_sel = 2'b10; jump = 1'b1; imm_sel = 3'b000;
+            end
+            7'b0001011: begin                                  // Phase 3: custom-0 (MAC/RELU)
+                // rs1+rs2 read from regfile, result comes from mul_unit
+                // (selected in EX by ex_op signal decoded in top-level).
+                reg_write = 1'b1;
+                wb_sel    = 2'b00;
             end
             default: ;   // all defaults already set above
         endcase
