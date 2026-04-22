@@ -8,7 +8,7 @@ RV32I CPU implemented in Verilog. Currently **5-stage pipelined**. The roadmap i
 
 **Harvard architecture**: separate instruction and data memories (both 16 KB, byte-addressable). No cache, no DRAM, no OS.
 
-## Current state — Phase 3 complete
+## Current state — Phase 3 complete, Phase 4 (RDCYC + Benchmarks) in design
 
 ### Phase 0 — Single-cycle (complete, preserved)
 Single-cycle CPU is stabilized. All 47 RV32I instructions verified.
@@ -197,18 +197,80 @@ PC → imem → [instruction fields]
 - **Phase 1** ✅ 5-stage pipeline, forwarding, load-use stall, branch flush (`cpu_top_pipeline.v`)
 - **Phase 2** ✅ 16-entry BTB + 2-bit saturating predictor (`cpu_top_pipelined_branch.v`)
 - **Phase 3** ✅ M extension (MUL) + custom ML (MAC, ReLU) (`cpu_top_mext.v`)
-- **Phase 4** ⬅ *next*: Cycle counter (`RDCYC` custom instr), C benchmarks (matmul, ReLU, fib), report
+- **Phase 4** ⬅ *in progress*: 32-bit cycle counter (`RDCYC`), 4 C benchmarks (matmul, ReLU, dot product, fib), performance report
 
 **Locked architectural decisions:**
 - Branch resolves in EX (2-cycle flush penalty on mispredict)
 - Each phase adds a new top-level file; Phase 0 modules only modified for ISA extensions (`control_unit.v` updated in Phase 3)
 - MAC encoding (Option B): `rd = rs1 + rs1*rs2` — `rd` is free, only 2 regfile reads
 
-**Phase 4 design notes (for next session):**
-- `RDCYC rd` reads a 32-bit free-running cycle counter into `rd`
-- Counter increments every clock after reset
-- Use opcode `0001011` (custom-0) with a new funct3 (e.g. `010`) to
-  avoid colliding with MAC (`000`) and RELU (`001`)
-- Decode in ID as another `ex_op` value, or widen `ex_op` to 3 bits;
-  result mux in EX selects the counter register
-- Deferred: C benchmarks and performance report (need Vivado runs)
+### Phase 4 — Cycle counter + Benchmarks (design locked, awaiting implementation)
+
+**RDCYC instruction — reads cycle counter into `rd`:**
+- **Encoding:** opcode=`0001011` (custom-0), funct3=`010` (to avoid MAC `000` and RELU `001`), rs1=unused, rs2=unused
+  - Binary: `0000000_00000_00000_010_rd_0001011`
+  - Semantics: `rd = cycle_counter` (side-effect-free read)
+- **Cycle counter register:**
+  - 32-bit free-running counter, auto-increments on every clock after reset release
+  - Never wraps (or wraps to 0 at 2^32, but benchmarks won't reach that)
+  - Read combinationally in WB (no write port)
+- **Integration into cpu_top_mext.v:**
+  - ID stage: Decode RDCYC via `id_is_rdcyc = (id_opcode == 7'b0001011) && (id_funct3 == 3'b010)`
+  - Add to `id_ex_op` decoder: `id_ex_op = ... id_is_rdcyc ? 2'b00 : ... ` (treat as third special op, OR widen ex_op to 3 bits)
+  - **Cleaner approach:** Widen `ex_op` to 3 bits: `00`=ALU, `01`=MUL, `10`=MAC, `11`=RELU, `100`=RDCYC
+  - EX stage result mux: add `(ex_op == 3'b100) ? cycle_counter : ...` before existing `(ex_op == 2'b00) ? alu : mul` logic
+  - Cycle counter register: instantiate as a simple `always @(posedge clk)` counter in the top-level
+  - Update CLAUDE.md after Phase 4 implementation with final opcode choices
+
+**Benchmark programs (C source → hand-assemble or use custom toolchain directives):**
+
+1. **Matmul (8×8 int32, in `.data` section):**
+   - Initialize 8×8 matrices A, B in DMEM
+   - C[i][j] = Σ(A[i][k] * B[k][j]) for k ∈ [0, 7]
+   - Uses MUL per element, 512 multiplies total
+   - Expected: ~650–800 cycles (pipelined with forwarding)
+
+2. **ReLU (32-element array):**
+   - Load array from DMEM
+   - For each element: `y[i] = (x[i] < 0) ? 0 : x[i]` via RELU instr
+   - 32 ReLU ops
+   - Expected: ~100–150 cycles
+
+3. **Dot product (16-element vectors):**
+   - Σ(A[i] * B[i]) for i ∈ [0, 15]
+   - Uses MAC (or MUL + ADD sequence)
+   - 16 MACs (or 32 ops if MUL+ADD)
+   - Expected: ~100–200 cycles depending on forwarding
+
+4. **Fibonacci (fib(20)):**
+   - Recursive or iterative; stress branch prediction (BTB in Phase 2+)
+   - Many branches → shows BTB benefit vs always-not-taken
+   - Expected: Phase 0 ~5000 cycles, Phase 2 ~3500 cycles (BTB saves ~30%)
+
+**Performance measurement approach:**
+- Write all 4 benchmarks as C source (no M-ext asm directives yet — assemble manually or via `__asm__` inline)
+- Compile each for Phase 0 (single-cycle) → Phase 3 (with BTB+MUL)
+- In each testbench, read `cycle_counter` at start and end: `cycles_elapsed = end_count - start_count`
+- Table results (Phases 0 → 3, per benchmark):
+
+  | Benchmark | Phase 0 | Phase 1 | Phase 2 | Phase 3 | Phase 1 speedup | Phase 2 speedup | Phase 3 speedup |
+  |-----------|---------|---------|---------|---------|-----------------|-----------------|-----------------|
+  | Matmul    | ~900    | ~750    | ~700    | ~600    | 1.2×            | 1.3×            | 1.5×            |
+  | ReLU      | ~160    | ~140    | ~130    | ~110    | 1.1×            | 1.2×            | 1.5×            |
+  | DotProd   | ~400    | ~350    | ~330    | ~280    | 1.1×            | 1.2×            | 1.4×            |
+  | Fib(20)   | ~8000   | ~7200   | ~5500   | ~5500   | 1.1×            | 1.5×            | 1.5×            |
+
+- Include waveform snapshots (one per benchmark showing MUL, forwarding, BTB mispredict)
+
+**Testing procedure (per phase):**
+1. Assemble benchmark to `.hex` files → place in Vivado sim directory
+2. Set appropriate testbench as top (tb_cpu_top / tb_cpu_top_pipeline / tb_cpu_top_pipelined_branch / tb_cpu_top_mext_with_rdcyc)
+3. Run Behavioral Simulation for enough cycles to complete benchmark
+4. Read cycle count from RDCYC register or add display statements
+5. Tabulate and compare
+
+**Files to add/modify in Phase 4:**
+- `cpu_top_mext_rdcyc.v` (or extend `cpu_top_mext.v`) — widen `ex_op`, add cycle counter, RDCYC decode
+- `tb_cpu_top_mext_rdcyc.v` — testbench that runs a single benchmark, reports cycle count
+- `tests/matmul_8x8.c`, `tests/relu_32.c`, `tests/dotprod_16.c`, `tests/fib_20.c` — benchmark sources
+- Update CLAUDE.md after implementation with final design decisions and results table
