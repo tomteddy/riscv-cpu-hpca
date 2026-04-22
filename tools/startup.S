@@ -12,4 +12,7 @@ _start:
     la   sp, 0x4000          /* stack top = end of 16 KB DMEM */
     call main
 halt:
-    j halt                   /* spin forever once main returns */
+    beq zero, zero, halt     /* spin forever — BEQ so BTB can predict it,
+                                keeping if_pc_out stable for halt detection.
+                                (JAL would cause 2-cycle flush every iteration,
+                                 making if_pc_out cycle 3 addresses → timeout) */

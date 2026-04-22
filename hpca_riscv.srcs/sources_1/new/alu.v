@@ -11,7 +11,7 @@ module alu (
     input      [31:0] b,
     input      [3:0]  alu_ctrl,
     output reg [31:0] result,
-    output            zero
+    output wire       zero
 );
 
     assign zero = (result == 32'b0);
@@ -31,5 +31,10 @@ module alu (
             default: result = 32'b0;
         endcase
     end
+
+//    always @(*) begin
+//    if (a == 0 && b == 0 && alu_ctrl == 4'b0001)  // SUB
+//        $display("ALU DEBUG: a=%d, b=%d, result=%d, zero=%b", a, b, result, zero);
+//end
 
 endmodule

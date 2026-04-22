@@ -22,6 +22,7 @@ set OBJCOPY=%TOOLCHAIN%\riscv64-unknown-elf-objcopy.exe
 set OBJDUMP=%TOOLCHAIN%\riscv64-unknown-elf-objdump.exe
 
 set CFLAGS=-march=rv32i -mabi=ilp32 -nostdlib -nostartfiles -Os -Wall -ffreestanding -fno-builtin
+set CUSTOM_OPS=%~dp0custom_ops.S
 
 if "%~1"=="" (
     echo Usage: tools\build.bat ^<source.c^>
@@ -34,7 +35,7 @@ set LINKER=%~dp0link.ld
 set STARTUP=%~dp0startup.S
 
 echo [1/4] Compiling %SRC% ...
-"%GCC%" %CFLAGS% -T "%LINKER%" "%STARTUP%" "%SRC%" -o "%BASE%.elf"
+"%GCC%" %CFLAGS% -T "%LINKER%" "%STARTUP%" "%CUSTOM_OPS%" "%SRC%" -o "%BASE%.elf"
 if errorlevel 1 goto :error
 
 echo [2/4] Extracting instruction memory -^> %BASE%.instructions.hex ...
@@ -42,6 +43,9 @@ echo [2/4] Extracting instruction memory -^> %BASE%.instructions.hex ...
 if errorlevel 1 goto :error
 
 echo [3/4] Extracting data memory -^> %BASE%.data.hex ...
+REM --change-addresses -65536 strips the 0x10000 LMA offset added by link.ld
+REM so that $readmemh sees byte addresses starting from 0 (dmem.mem[0]).
+@REM "%OBJCOPY%" -O verilog --only-section=.rodata --only-section=.data --only-section=.sdata --change-addresses -65536 "%BASE%.elf" "%BASE%.data.hex"
 "%OBJCOPY%" -O verilog --only-section=.rodata --only-section=.data --only-section=.sdata "%BASE%.elf" "%BASE%.data.hex"
 if errorlevel 1 goto :error
 
