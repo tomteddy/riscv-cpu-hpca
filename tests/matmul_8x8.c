@@ -1,5 +1,5 @@
 /*
- * matmul_8x8.c — 8×8 signed integer matrix multiply using custom MUL.
+ * matmul_8x8.c — 8×8 signed integer matrix multiply using mac3_custom.
  *
  * A[i][j] = 1           (all ones)
  * B[i][j] = j + 1       (column j filled with j+1)
@@ -9,7 +9,10 @@
  *              col4=40, col5=48, col6=56, col7=64
  *   (same for every row)
  *
- * Uses mul_custom() from custom_ops.S (MUL instruction).
+ * Uses mac3_custom(acc, a, b) = acc + a*b  (3-operand MAC, Phase 4).
+ * Inner loop: sum = mac3_custom(sum, A[i][k], B[k][j])
+ *   => one MAC instruction per multiply-accumulate (vs MUL+ADD = 2 instrs).
+ *
  * Compile:  tools\build.bat tests\matmul_8x8.c
  */
 
@@ -47,7 +50,7 @@ int main(void) {
         for (j = 0; j < N; j++) {
             int sum = 0;
             for (k = 0; k < N; k++)
-                sum += mul_custom(A[i][k], B[k][j]);
+                sum = mac3_custom(sum, A[i][k], B[k][j]);
             C[i][j] = sum;
         }
     }

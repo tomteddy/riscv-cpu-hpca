@@ -11,7 +11,7 @@
 //   ex_op encoding (widened to 3 bits):
 //     000 = use ALU result
 //     001 = MUL   (result = rs1*rs2)
-//     010 = MAC   (result = rs1 + rs1*rs2)
+//     010 = MAC   (result = rd + rs1*rs2)   �? 3-operand (Phase 4)
 //     011 = RELU  (result = max(rs1, 0))
 //     100 = RDCYC (result = cycle_counter)
 //
@@ -25,7 +25,9 @@
 
 `timescale 1ns / 1ps
 
-module cpu_top_mext_rdcyc (
+module cpu_top_mext_rdcyc #(
+    parameter USE_BTB = 1   // 1 = BTB active; 0 = always-not-taken (for benchmark comparison)
+) (
     input clk,
     input reset
 );
@@ -41,10 +43,17 @@ module cpu_top_mext_rdcyc (
 
     // ================================================================
     //  Hazard / forwarding control
+    //  *_raw = from hazard_unit (unchanged Phase 1 module)
+    //  plain names = augmented with Phase 4 MAC-rs3 load-use detection
     // ================================================================
-    wire        stall;
-    wire        flush_if_id, flush_id_ex;
+    wire        stall_raw, flush_if_id_raw, flush_id_ex_raw;
+    wire        rs3_load_use;            // MAC in ID reads rs3 == load in EX's rd
+    wire        stall        = stall_raw || rs3_load_use;
+    wire        flush_if_id  = flush_if_id_raw;   // no change: don't need to flush IF/ID on rs3 stall
+    wire        flush_id_ex  = flush_id_ex_raw || rs3_load_use;
     wire [1:0]  forward_a, forward_b;
+    wire [1:0]  forward_c;                  // Phase 4: forward for MAC rs3 input
+    reg  [4:0]  ex_rs3_reg;                 // latched rs3 index in EX (for forward_c lookup)
 
     // ================================================================
     //  IF STAGE
@@ -86,10 +95,11 @@ module cpu_top_mext_rdcyc (
     );
 
     // Inline register: propagate BTB prediction IF -> ID
+    // When USE_BTB=0, always force predict-not-taken (Option-A disable).
     reg id_predicted_taken;
     always @(posedge clk) begin
-        if (reset || flush_if_id)      id_predicted_taken <= 1'b0;
-        else if (!stall)               id_predicted_taken <= if_btb_predict_taken;
+        if (reset || flush_if_id) id_predicted_taken <= 1'b0;
+        else if (!stall)          id_predicted_taken <= USE_BTB ? if_btb_predict_taken : 1'b0;
     end
 
     // ================================================================
@@ -134,25 +144,29 @@ module cpu_top_mext_rdcyc (
         .imm_out(id_imm)
     );
 
-    wire [31:0] id_rs1_data_raw, id_rs2_data_raw;
-    wire [31:0] id_rs1_data, id_rs2_data;
+    wire [31:0] id_rs1_data_raw, id_rs2_data_raw, id_rs3_data_raw;
+    wire [31:0] id_rs1_data, id_rs2_data, id_rs3_data;
 
     wire        wb_reg_write;
     wire [4:0]  wb_rd;
     wire [31:0] wb_data;
 
-    register_file reg_file (
+    // Phase 4: 3-port regfile. rs3 is wired to id_rd so MAC can read its
+    // accumulator. Non-MAC instructions drive rs3 too (dead read, harmless).
+    register_file_3p reg_file (
         .clk(clk),
         .reg_write(wb_reg_write),
-        .rs1(id_rs1), .rs2(id_rs2),
+        .rs1(id_rs1), .rs2(id_rs2), .rs3(id_rd),
         .rd(wb_rd),
         .write_data(wb_data),
         .read_data1(id_rs1_data_raw),
-        .read_data2(id_rs2_data_raw)
+        .read_data2(id_rs2_data_raw),
+        .read_data3(id_rs3_data_raw)
     );
 
     assign id_rs1_data = (wb_reg_write && wb_rd != 5'd0 && wb_rd == id_rs1) ? wb_data : id_rs1_data_raw;
     assign id_rs2_data = (wb_reg_write && wb_rd != 5'd0 && wb_rd == id_rs2) ? wb_data : id_rs2_data_raw;
+    assign id_rs3_data = (wb_reg_write && wb_rd != 5'd0 && wb_rd == id_rd ) ? wb_data : id_rs3_data_raw;
 
     // ================================================================
     //  ID/EX REGISTER
@@ -189,19 +203,36 @@ module cpu_top_mext_rdcyc (
         .ex_opcode(ex_opcode)
     );
 
-    // Inline registers: propagate predicted_taken and ex_op through ID -> EX
+    // Inline registers: propagate predicted_taken, ex_op, and the MAC
+    // accumulator (rs3) value through ID -> EX. ex_rs3_reg is the rs3
+    // register index (= id_rd of the MAC) latched for forward_c lookup.
     reg        ex_predicted_taken;
     reg [2:0]  ex_op;
+    reg [31:0] ex_rs3_data;
     always @(posedge clk) begin
         if (reset || flush_id_ex) begin
             ex_predicted_taken <= 1'b0;
             ex_op              <= 3'b000;
+            ex_rs3_data        <= 32'b0;
+            ex_rs3_reg         <= 5'b0;
         end else begin
-             ex_predicted_taken <= id_predicted_taken;
-//            ex_predicted_taken <= 1'b0;
+            ex_predicted_taken <= id_predicted_taken;
             ex_op              <= id_ex_op;
+            ex_rs3_data        <= id_rs3_data;
+            ex_rs3_reg         <= id_rd;       // MAC accumulator reg index = id_rd
         end
     end
+
+    // Phase 4: forward_c — forwarding mux for the MAC accumulator (rs3).
+    // Same logic as forwarding_unit's forward_a/b, just keyed on ex_rs3_reg.
+    assign forward_c =
+        (mem_reg_write && (mem_rd != 5'd0) && (mem_rd == ex_rs3_reg)) ? 2'b01 :
+        (wb_reg_write  && (wb_rd  != 5'd0) && (wb_rd  == ex_rs3_reg)) ? 2'b10 :
+                                                                        2'b00;
+
+    // Phase 4: rs3 load-use hazard. Only applies to MAC (id_is_mac), since
+    // non-MAC instructions don't actually consume ex_rs3_data.
+    assign rs3_load_use = id_is_mac && (ex_wb_sel == 2'b01) && (ex_rd != 5'd0) && (ex_rd == id_rd);
 
     // ================================================================
     //  EX STAGE
@@ -219,6 +250,12 @@ module cpu_top_mext_rdcyc (
         (forward_b == 2'b01) ? mem_alu_result :
         (forward_b == 2'b10) ? wb_data        :
                                ex_rs2_data;
+
+    // Phase 4: MAC accumulator (rs3) with forwarding.
+    wire [31:0] ex_rs3_fwd =
+        (forward_c == 2'b01) ? mem_alu_result :
+        (forward_c == 2'b10) ? wb_data        :
+                               ex_rs3_data;
 
     wire [31:0] ex_alu_a =
         (ex_alu_a_sel == 2'b01) ? ex_pc   :
@@ -252,6 +289,7 @@ module cpu_top_mext_rdcyc (
     mul_unit mul (
         .a      (ex_rs1_fwd),
         .b      (ex_rs2_fwd),
+        .c      (ex_rs3_fwd),         // Phase 4: 3-operand MAC — rd = rd + rs1*rs2
         .ex_op  (ex_op[1:0]),
         .result (ex_mul_result)
     );
@@ -295,7 +333,7 @@ module cpu_top_mext_rdcyc (
     wire [31:0] ex_jalr_target   = (ex_rs1_fwd + ex_imm) & 32'hFFFFFFFE;
 
     wire branch_mispredict = ex_branch && (branch_taken != ex_predicted_taken);
-    wire btb_update_en     = ex_branch;
+    wire btb_update_en     = USE_BTB ? ex_branch : 1'b0;  // don't train when BTB disabled
     wire control_redirect  = branch_mispredict || ex_jump;
 
     wire [31:0] ex_correct_pc =
@@ -305,9 +343,9 @@ module cpu_top_mext_rdcyc (
                                                ex_pc_plus4;   // predicted-taken but not-taken → fall through branch
 
     assign pc_next =
-        control_redirect      ? ex_correct_pc         :
-        if_btb_predict_taken  ? if_btb_predict_target :
-                                if_pc_plus4;
+        control_redirect                        ? ex_correct_pc         :
+        (USE_BTB && if_btb_predict_taken)       ? if_btb_predict_target :
+                                                  if_pc_plus4;
 
     // ---- BTB instance (placed after EX wires exist) ----
     btb #(.ENTRIES(16)) branch_predictor (
@@ -406,9 +444,9 @@ module cpu_top_mext_rdcyc (
         .ex_rd(ex_rd), .ex_wb_sel(ex_wb_sel),
         .branch_taken(branch_mispredict),
         .ex_jump(ex_jump),
-        .stall(stall),
-        .flush_if_id(flush_if_id),
-        .flush_id_ex(flush_id_ex)
+        .stall(stall_raw),
+        .flush_if_id(flush_if_id_raw),
+        .flush_id_ex(flush_id_ex_raw)
     );
 
 endmodule

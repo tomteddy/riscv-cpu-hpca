@@ -1,15 +1,14 @@
 /*
- * dotprod_16.c — dot product of two 16-element vectors using custom MUL.
+ * dotprod_16.c — dot product of two 16-element vectors using mac3_custom.
  *
  * A[i] = i + 1   (1..16)
  * B[i] = i + 1   (1..16)
  * dot  = Σ_{i=0}^{15} A[i]*B[i] = Σ_{i=1}^{16} i^2 = 1496
  *
- * Note on MAC: the MAC instruction computes rd = rs1 + rs1*rs2, which is
- * not a classic FMA. A dot product needs acc += A[i]*B[i], so we use
- * mul_custom() for the multiply and accumulate into a scalar.
+ * Uses mac3_custom(acc, a, b) = acc + a*b  (3-operand MAC, Phase 4).
+ * Inner loop: dot = mac3_custom(dot, A[i], B[i])
+ *   => one MAC instruction per element (vs MUL+ADD = 2 instrs).
  *
- * Uses mul_custom() from custom_ops.S (MUL instruction).
  * Compile:  tools\build.bat tests\dotprod_16.c
  */
 
@@ -26,7 +25,7 @@ int main(void) {
     int i;
     int dot = 0;
     for (i = 0; i < N; i++)
-        dot += mul_custom(A[i], B[i]);
+        dot = mac3_custom(dot, A[i], B[i]);
     result = dot;   /* store so compiler can't eliminate loop */
     return 0;
 }

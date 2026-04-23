@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-RV32I CPU implemented in Verilog. Currently **5-stage pipelined**. The roadmap is to evolve into a **pipelined CPU with 2-bit branch prediction, M extension (MUL), and custom ML instructions (MAC, ReLU)** as an M.Tech term project. Target: Xilinx Vivado simulation, optional Artix-7 / Zynq synthesis.
+RV32I CPU implemented in Verilog. **5-stage pipelined CPU with 2-bit BTB branch prediction, M extension (MUL), and custom ML instructions (MAC, ReLU, RDCYC)** — completed M.Tech term project. Target: Xilinx Vivado simulation, optional Artix-7 / Zynq synthesis.
 
 **Harvard architecture**: separate instruction and data memories (both 16 KB, byte-addressable). No cache, no DRAM, no OS.
 
-## Current state — Phase 3 complete, Phase 4 (RDCYC + Benchmarks) in design
+## Current state — All 4 phases complete ✅
 
 ### Phase 0 — Single-cycle (complete, preserved)
 Single-cycle CPU is stabilized. All 47 RV32I instructions verified.
@@ -67,44 +67,177 @@ New files added:
 Single-cycle signed multiplier supporting MUL, MAC, RELU. **First phase
 to modify a Phase 0 module** (`control_unit.v` gained opcode `0001011`).
 
-New instructions:
+New instructions (Phase 3 semantics — preserved in `cpu_top_mext.v`):
 | Instr | Opcode    | funct3 | funct7    | Semantics                       |
 |-------|-----------|--------|-----------|---------------------------------|
 | MUL   | `0110011` | `000`  | `0000001` | `rd = (rs1 * rs2)[31:0]`        |
 | MAC   | `0001011` | `000`  | —         | `rd = rs1 + (rs1 * rs2)`        |
 | RELU  | `0001011` | `001`  | —         | `rd = (rs1[31]) ? 0 : rs1`      |
 
-**MAC encoding choice (Option B):** `rd = rs1 + rs1*rs2` — `rd` is a free
-destination, accumulator source is `rs1`. Keeps the 2-port regfile.
+> **Note:** Phase 4 redesigns MAC to the classical 3-operand form `rd = rd + rs1*rs2`
+> (see Phase 4 below). Phase 3 MAC semantics are preserved unchanged in `cpu_top_mext.v`
+> via `c = rs1_fwd` in the `mul_unit` instantiation.
 
 New / modified files:
-- `mul_unit.v` — NEW, single-cycle combinational multiplier + MAC + RELU.
-  Vivado infers a DSP48 slice for the 32×32 signed multiply.
+- `mul_unit.v` — NEW (modified in Phase 4 to add `c` input; see below)
 - `control_unit.v` — MODIFIED, added opcode `0001011` (custom-0) case.
-  Sets `reg_write=1`, everything else default. Decode of MAC vs RELU
-  happens in the top-level via `ex_op` (funct3).
 - `cpu_top_mext.v` — NEW, Phase 3 top-level (based on Phase 2).
-- `tb_cpu_top_mext.v` — NEW, self-contained TB; hand-assembles 13
-  instructions and loads them directly into `uut.imem.mem` byte-by-byte
-  (imem is byte-addressed little-endian — don't write 32-bit words to
-  `mem[i]` indices!).
+- `tb_cpu_top_mext.v` — NEW, self-contained TB; hand-assembles 13 instructions.
 
 **Phase 3 design decisions (locked):**
 - `ex_op[1:0]` decoded in ID (`01`=MUL, `10`=MAC, `11`=RELU, `00`=ALU).
-  Propagated through ID/EX via inline register in the top-level (id_ex_reg
-  module unchanged).
+  Propagated through ID/EX via inline register in the top-level.
 - EX stage result mux: `(ex_op == 00) ? ex_alu_result : ex_mul_result`.
-  The muxed value is written into EX/MEM's `alu_result` slot so forwarding
-  (which keys off `mem_rd`/`wb_rd`) handles MUL/MAC/RELU writes with
-  zero changes to `forwarding_unit`.
-- Branch unit still reads `ex_alu_result` (un-muxed) — branches never
-  care about the mul_unit path.
+- Branch unit still reads `ex_alu_result` (un-muxed).
 
 **Switching between phases:**
 - Phase 0 (single-cycle):  `tb_cpu_top`
 - Phase 1 (5-stage):       `tb_cpu_top_pipeline`
 - Phase 2 (+BTB):          `tb_cpu_top_pipelined_branch`
 - Phase 3 (+MUL/MAC/RELU): `tb_cpu_top_mext`
+
+### Phase 4 — RDCYC + 3-operand MAC + Benchmarks (complete, verified) ✅
+
+Phase 4 adds:
+1. **RDCYC** — 32-bit cycle counter readable from software
+2. **3-operand MAC redesign** — `rd = rd + rs1*rs2` (classical FMA form, usable in real loops)
+3. **Single-cycle Phase 4 top** — `cpu_top_sc_rdcyc.v` for cycle-count comparison
+4. **BTB on/off parameter** — `USE_BTB` gate for fair pipeline comparison
+5. **Benchmark suite** — 9 C programs (5 custom-op, 4 software-only baselines)
+6. **Halt detection** — instruction-encoding detector (robust to BTB flush cycles)
+
+#### New/modified files in Phase 4
+
+| File | Change |
+|------|--------|
+| `cpu_top_mext_rdcyc.v` | NEW — Phase 4 pipelined top with RDCYC + 3-op MAC + USE_BTB |
+| `tb_cpu_top_mext_rdcyc.v` | NEW — benchmark TB with halt detector, TIMEOUT=500000 |
+| `cpu_top_sc_rdcyc.v` | NEW — single-cycle Phase 4 top (no pipeline, no BTB) |
+| `tb_cpu_top_sc_rdcyc.v` | NEW — single-cycle benchmark TB, TIMEOUT=2000000 |
+| `register_file_3p.v` | NEW — 3-port regfile (rs1, rs2, rs3 reads + 1 write) |
+| `mul_unit.v` | MODIFIED — added `c [31:0]` input; MAC = `c + a*b` |
+| `cpu_top_mext.v` | 1-line fix — passes `c=rs1_fwd` to preserve Phase 3 semantics |
+| `tools/custom_ops.S` | Added `mac3_custom` function (encoding `0x00C5850B`) |
+| `tools/custom_ops.h` | Added `extern int mac3_custom(int acc, int a, int b);` |
+| `tests/matmul_8x8.c` | Updated inner loop to use `mac3_custom` |
+| `tests/dotprod_16.c` | Updated loop to use `mac3_custom` |
+| `tests/grad_descent.c` | NEW — fixed-point linear regression, 640 MACs total |
+| `tests/matmul_8x8_nocustom.c` | NEW — same algorithm, software multiply only |
+| `tests/dotprod_16_nocustom.c` | NEW — same algorithm, software multiply only |
+| `tests/relu_32_nocustom.c` | NEW — branchless C ReLU instead of custom instruction |
+| `tests/grad_descent_nocustom.c` | NEW — software multiply baseline for gradient descent |
+
+#### Phase 4 ISA additions
+
+| Instr | Opcode    | funct3 | Semantics                            | ex_op |
+|-------|-----------|--------|--------------------------------------|-------|
+| MAC   | `0001011` | `000`  | `rd = rd + rs1*rs2` (3-operand FMA)  | `010` |
+| RELU  | `0001011` | `001`  | `rd = (rs1[31]) ? 0 : rs1`           | `011` |
+| RDCYC | `0001011` | `010`  | `rd = cycle_counter`                 | `100` |
+
+`ex_op` is now 3 bits: `000`=ALU, `001`=MUL, `010`=MAC, `011`=RELU, `100`=RDCYC.
+
+**MAC calling convention:** `mac3_custom(acc, a, b)` — maps to `a0 = a0 + a1*a2`.
+Encoding: `0000000_01100_01011_000_01010_0001011` = `0x00C5850B`.
+
+#### Phase 4 design decisions
+
+**3-operand MAC via 3rd register file port:**
+- `register_file_3p` adds `rs3` read port (combinational, same as rs1/rs2).
+- In Phase 4 tops, `rs3 = id_rd` (the accumulator register).
+- WB→ID bypass for rs3: `id_rs3_data = (wb_reg_write && wb_rd == id_rd) ? wb_data : raw`.
+- EX forwarding for rs3 (`forward_c`): inlined in top-level, checks `ex_rs3_reg` vs `mem_rd`/`wb_rd`.
+- MAC load-use stall (`rs3_load_use`): stall when MAC's accumulator source follows a load.
+
+**Halt detection (robust to BTB pipeline flush cycles):**
+- Detects `32'h00000063` (`beq x0,x0,0`) at IF stage for HALT_WINDOW=8 consecutive fetches.
+- BTB-off caused PC to cycle 0x08→0x0C→0x10 (2-cycle flush every iteration); PC-stability
+  detector failed. Instruction-encoding approach works regardless of BTB state.
+
+**`ex_correct_pc` fallthrough fix:**
+- For a branch predicted-taken but actually-not-taken, redirect must use `ex_pc_plus4`
+  (the branch's own PC+4), not `if_pc_plus4` (stale IF stage value). Bug fixed in Phase 4.
+
+**BTB parameterization (`USE_BTB`):**
+```verilog
+parameter USE_BTB = 1;
+// Gates: id_predicted_taken latch, btb_update_en, pc_next BTB branch
+```
+
+**Single-cycle top (`cpu_top_sc_rdcyc.v`):**
+- No pipeline registers, no forwarding, no hazard unit.
+- MAC rs3 read is combinational from prior cycle's write — correct for sequential execution.
+- Exposes `if_instr`, `cycle_counter`, `dmem.mem` for testbench halt detection.
+
+#### Simulating Phase 4 benchmarks
+
+```
+# 1. Build benchmark
+tools\build.bat tests\<name>.c
+
+# 2. Copy hex files to Vivado sim working directory
+copy tests\<name>.instructions.hex instructions.hex
+copy tests\<name>.data.hex data.hex
+
+# 3. Set simulation top and run:
+#    Pipeline + BTB:    tb_cpu_top_mext_rdcyc  (USE_BTB = 1, default)
+#    Pipeline no-BTB:  tb_cpu_top_mext_rdcyc  (set USE_BTB = 0 in TB)
+#    Single-cycle:     tb_cpu_top_sc_rdcyc
+```
+
+---
+
+## Phase 4 Benchmark Results
+
+### Table A — Cycle counts across CPU configurations
+
+| Benchmark | Single-cycle | Pipeline (no BTB) | Pipeline + BTB | BTB speedup |
+|---|---|---|---|---|
+| fib_20 | 112 | 157 | 121 | 1.30× |
+| matmul_8x8 | 5267 | 8392 | 7614 | 1.10× |
+| dotprod_16 | — | 271 | 243 | 1.12× |
+| relu_32 | — | 509 | 449 | 1.13× |
+| grad_descent | 4831 | 7717 | 7543 | 1.02× |
+| matmul_8x8_nocustom | 9857 | 16055 | 12211 | 1.31× |
+| dotprod_16_nocustom | — | 499 | 381 | 1.31× |
+| relu_32_nocustom | — | 369 | 247 | 1.49× |
+| grad_desc_nocustom | 13440 | 22686 | 18642 | 1.22× |
+
+> **Why single-cycle has fewer cycles than pipeline:** Each instruction takes exactly
+> 1 clock cycle on the single-cycle CPU — no stalls, no flush overhead. The pipeline
+> adds load-use stall cycles (+1 each) and branch mispredict flush cycles (+2 each),
+> causing higher cycle counts. In real silicon the pipeline wins because its clock
+> period is 3–5× shorter (each stage is simpler = faster). In Vivado simulation,
+> both use the same abstract clock, so cycle count is the only metric and pipeline
+> appears "slower". This is the classic **CPI × clock-period tradeoff**.
+
+### Table B — Custom instruction speedup (Pipeline + BTB)
+
+| Benchmark | No-custom (cycles) | With custom (cycles) | Speedup |
+|---|---|---|---|
+| matmul_8x8 | 12211 | 7614 | **1.60×** |
+| dotprod_16 | 381 | 243 | **1.57×** |
+| relu_32 | 247 | 449 | 0.55× ⚠ |
+| grad_descent | 18642 | 7543 | **2.47×** |
+
+> **relu_32 anomaly — custom is SLOWER:** `relu_custom` is implemented as a
+> function call (32 × JAL + RELU instruction + RET + 2-cycle flush = ~200 extra cycles).
+> The no-custom version uses a branchless inline C expression
+> `(x[i] & 0x80000000) ? 0 : x[i]` compiled to 2–3 ALU instructions with no call overhead.
+> Fix: use `__attribute__((always_inline))` or a `.macro`-based inline assembly macro
+> to eliminate call overhead. For MAC/MUL-heavy kernels the call overhead amortizes
+> over many multiply cycles, so they still show a real speedup.
+
+### Key observations
+
+- **MAC delivers the largest speedup** — grad_descent achieves **2.47×** because 640 MACs
+  replace 640 software-multiply loops (each sw_mul takes ~30+ shift-add iterations).
+- **BTB helps branch-heavy code most** — fib (1.30×), matmul_nocustom (1.31×), relu_nocustom
+  (1.49×). Grad_descent is mostly compute with few branches → BTB barely helps (1.02×).
+- **Pipeline stalls dominate matmul** — back-to-back loads/stores create many load-use
+  stalls, explaining the high pipeline cycle count vs single-cycle.
+
+---
 
 ## Development Environment
 
@@ -128,12 +261,14 @@ Produces next to the `.c` file:
 - `<name>.data.hex` — DMEM init (initialized `.data` / `.rodata`)
 - `<name>.dis` — disassembly for debugging
 
-To simulate a specific test in Vivado: copy/rename the two `.hex` files to `instructions.hex` and `data.hex` in the Vivado sim working directory, then run Behavioral Simulation on `tb_cpu_top` (single-cycle) or `tb_cpu_top_pipeline` (pipelined).
+To simulate a specific test in Vivado: copy/rename the two `.hex` files to `instructions.hex` and `data.hex` in the Vivado sim working directory, then run Behavioral Simulation on the appropriate testbench.
 
 **Toolchain files** (in `tools/`):
 - `link.ld` — linker script; `.text` → IMEM @ 0x0, `.rodata/.data/.bss` → DMEM @ 0x0
 - `startup.S` — minimal `_start` that sets `sp = 0x4000` (top of DMEM) and calls `main`
 - `build.bat` — one-command compile/link/objcopy pipeline
+- `custom_ops.S` — inline assembly for `mul_custom`, `mac3_custom`, `relu_custom`, `rdcyc_custom`
+- `custom_ops.h` — C declarations for the above
 
 ## Running simulations
 
@@ -150,6 +285,11 @@ To simulate a specific test in Vivado: copy/rename the two `.hex` files to `inst
 - Same `instructions.hex`, same expected values as single-cycle
 - Wait time: 120 cycles after reset (accounts for pipeline fill + stalls + flushes)
 - Click "Run All" (or `run all` in Tcl) — default 1000ns sim time is not enough
+
+**Phase 4 benchmark TBs:**
+- `tb_cpu_top_mext_rdcyc` — pipeline + BTB benchmark (`USE_BTB = 1` default; set to `0` for no-BTB)
+- `tb_cpu_top_sc_rdcyc` — single-cycle benchmark (TIMEOUT=2,000,000 — software-multiply tests are slow)
+- Both auto-detect halt via `beq x0,x0,0` instruction at IF; print `BENCHMARK COMPLETE: N cycles`
 
 **Unit tests**: set `tb_<module>` as simulation top (e.g. `tb_alu`, `tb_control_unit`) and run Behavioral Simulation.
 
@@ -197,80 +337,21 @@ PC → imem → [instruction fields]
 - **Phase 1** ✅ 5-stage pipeline, forwarding, load-use stall, branch flush (`cpu_top_pipeline.v`)
 - **Phase 2** ✅ 16-entry BTB + 2-bit saturating predictor (`cpu_top_pipelined_branch.v`)
 - **Phase 3** ✅ M extension (MUL) + custom ML (MAC, ReLU) (`cpu_top_mext.v`)
-- **Phase 4** ⬅ *in progress*: 32-bit cycle counter (`RDCYC`), 4 C benchmarks (matmul, ReLU, dot product, fib), performance report
+- **Phase 4** ✅ RDCYC cycle counter, 3-operand MAC, single-cycle top, 9-benchmark suite, performance report (`cpu_top_mext_rdcyc.v`, `cpu_top_sc_rdcyc.v`)
 
 **Locked architectural decisions:**
 - Branch resolves in EX (2-cycle flush penalty on mispredict)
-- Each phase adds a new top-level file; Phase 0 modules only modified for ISA extensions (`control_unit.v` updated in Phase 3)
-- MAC encoding (Option B): `rd = rs1 + rs1*rs2` — `rd` is free, only 2 regfile reads
+- Each phase adds a new top-level file; Phase 0 modules only modified for ISA extensions
+- Phase 4 MAC encoding (3-operand): `rd = rd + rs1*rs2` via `register_file_3p` + inline forwarding
+- Phase 3 MAC encoding preserved (2-operand): `rd = rs1 + rs1*rs2` in `cpu_top_mext.v`
 
-### Phase 4 — Cycle counter + Benchmarks (design locked, awaiting implementation)
+## Simulation top-level summary
 
-**RDCYC instruction — reads cycle counter into `rd`:**
-- **Encoding:** opcode=`0001011` (custom-0), funct3=`010` (to avoid MAC `000` and RELU `001`), rs1=unused, rs2=unused
-  - Binary: `0000000_00000_00000_010_rd_0001011`
-  - Semantics: `rd = cycle_counter` (side-effect-free read)
-- **Cycle counter register:**
-  - 32-bit free-running counter, auto-increments on every clock after reset release
-  - Never wraps (or wraps to 0 at 2^32, but benchmarks won't reach that)
-  - Read combinationally in WB (no write port)
-- **Integration into cpu_top_mext.v:**
-  - ID stage: Decode RDCYC via `id_is_rdcyc = (id_opcode == 7'b0001011) && (id_funct3 == 3'b010)`
-  - Add to `id_ex_op` decoder: `id_ex_op = ... id_is_rdcyc ? 2'b00 : ... ` (treat as third special op, OR widen ex_op to 3 bits)
-  - **Cleaner approach:** Widen `ex_op` to 3 bits: `00`=ALU, `01`=MUL, `10`=MAC, `11`=RELU, `100`=RDCYC
-  - EX stage result mux: add `(ex_op == 3'b100) ? cycle_counter : ...` before existing `(ex_op == 2'b00) ? alu : mul` logic
-  - Cycle counter register: instantiate as a simple `always @(posedge clk)` counter in the top-level
-  - Update CLAUDE.md after Phase 4 implementation with final opcode choices
-
-**Benchmark programs (C source → hand-assemble or use custom toolchain directives):**
-
-1. **Matmul (8×8 int32, in `.data` section):**
-   - Initialize 8×8 matrices A, B in DMEM
-   - C[i][j] = Σ(A[i][k] * B[k][j]) for k ∈ [0, 7]
-   - Uses MUL per element, 512 multiplies total
-   - Expected: ~650–800 cycles (pipelined with forwarding)
-
-2. **ReLU (32-element array):**
-   - Load array from DMEM
-   - For each element: `y[i] = (x[i] < 0) ? 0 : x[i]` via RELU instr
-   - 32 ReLU ops
-   - Expected: ~100–150 cycles
-
-3. **Dot product (16-element vectors):**
-   - Σ(A[i] * B[i]) for i ∈ [0, 15]
-   - Uses MAC (or MUL + ADD sequence)
-   - 16 MACs (or 32 ops if MUL+ADD)
-   - Expected: ~100–200 cycles depending on forwarding
-
-4. **Fibonacci (fib(20)):**
-   - Recursive or iterative; stress branch prediction (BTB in Phase 2+)
-   - Many branches → shows BTB benefit vs always-not-taken
-   - Expected: Phase 0 ~5000 cycles, Phase 2 ~3500 cycles (BTB saves ~30%)
-
-**Performance measurement approach:**
-- Write all 4 benchmarks as C source (no M-ext asm directives yet — assemble manually or via `__asm__` inline)
-- Compile each for Phase 0 (single-cycle) → Phase 3 (with BTB+MUL)
-- In each testbench, read `cycle_counter` at start and end: `cycles_elapsed = end_count - start_count`
-- Table results (Phases 0 → 3, per benchmark):
-
-  | Benchmark | Phase 0 | Phase 1 | Phase 2 | Phase 3 | Phase 1 speedup | Phase 2 speedup | Phase 3 speedup |
-  |-----------|---------|---------|---------|---------|-----------------|-----------------|-----------------|
-  | Matmul    | ~900    | ~750    | ~700    | ~600    | 1.2×            | 1.3×            | 1.5×            |
-  | ReLU      | ~160    | ~140    | ~130    | ~110    | 1.1×            | 1.2×            | 1.5×            |
-  | DotProd   | ~400    | ~350    | ~330    | ~280    | 1.1×            | 1.2×            | 1.4×            |
-  | Fib(20)   | ~8000   | ~7200   | ~5500   | ~5500   | 1.1×            | 1.5×            | 1.5×            |
-
-- Include waveform snapshots (one per benchmark showing MUL, forwarding, BTB mispredict)
-
-**Testing procedure (per phase):**
-1. Assemble benchmark to `.hex` files → place in Vivado sim directory
-2. Set appropriate testbench as top (tb_cpu_top / tb_cpu_top_pipeline / tb_cpu_top_pipelined_branch / tb_cpu_top_mext_with_rdcyc)
-3. Run Behavioral Simulation for enough cycles to complete benchmark
-4. Read cycle count from RDCYC register or add display statements
-5. Tabulate and compare
-
-**Files to add/modify in Phase 4:**
-- `cpu_top_mext_rdcyc.v` (or extend `cpu_top_mext.v`) — widen `ex_op`, add cycle counter, RDCYC decode
-- `tb_cpu_top_mext_rdcyc.v` — testbench that runs a single benchmark, reports cycle count
-- `tests/matmul_8x8.c`, `tests/relu_32.c`, `tests/dotprod_16.c`, `tests/fib_20.c` — benchmark sources
-- Update CLAUDE.md after implementation with final design decisions and results table
+| Phase | Testbench | Description |
+|-------|-----------|-------------|
+| 0 | `tb_cpu_top` | Single-cycle, 47-instruction verification |
+| 1 | `tb_cpu_top_pipeline` | 5-stage pipeline, same 47 instructions |
+| 2 | `tb_cpu_top_pipelined_branch` | Pipeline + BTB, same 47 instructions |
+| 3 | `tb_cpu_top_mext` | Pipeline + BTB + MUL/MAC/RELU, 13-instruction MAC test |
+| 4 (pipeline) | `tb_cpu_top_mext_rdcyc` | Pipeline + BTB + RDCYC + 3-op MAC benchmarks |
+| 4 (single-cycle) | `tb_cpu_top_sc_rdcyc` | Single-cycle + RDCYC + 3-op MAC benchmarks |

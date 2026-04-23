@@ -1,54 +1,37 @@
 // ============================================================
-// Module : tb_cpu_top_mext_rdcyc
-// Project : RV32I Pipelined CPU — Phase 4 testbench
-// Description : Reusable benchmark driver for cpu_top_mext_rdcyc.
+// Module : tb_cpu_top_sc_rdcyc
+// Project : RV32I Single-Cycle CPU — Phase 4 benchmark driver
+// Description : Same driver as tb_cpu_top_mext_rdcyc but runs
+//               cpu_top_sc_rdcyc (single-cycle baseline).
 //
-//   Usage:
-//     1. Build a benchmark:  tools\build.bat tests\<name>.c
-//     2. Copy output to sim working dir:
-//          copy tests\<name>.instructions.hex instructions.hex
-//          copy tests\<name>.data.hex        data.hex
+//   Usage: identical to tb_cpu_top_mext_rdcyc —
+//     1. Build: tools\build.bat tests\<name>.c
+//     2. Copy .hex files to sim dir as instructions.hex / data.hex
 //     3. Set this module as simulation top in Vivado.
 //     4. Run Behavioral Simulation → "Run All".
 //     5. Read elapsed cycle count from Tcl console.
 //
-//   Measurement:
-//     - start_cycle = uut.cycle_counter captured right after reset
-//     - end_cycle   = uut.cycle_counter captured when halt loop detected
-//     - halt loop detected when PC stops changing for HALT_WINDOW cycles
-//
-//   RDCYC sanity check: verifies cycle_counter increments every clock
-//   before releasing reset and starting the benchmark.
-//
-//   Timeout: 500000 cycles. Matmul (8×8) with 512 multiplies can take
-//   ~300K+ cycles due to memory access patterns and pipeline overhead.
+//   Halt detection: counts IF fetches of the halt instruction
+//   32'h00000063 (beq x0,x0,0). Works without BTB/pipeline.
 // ============================================================
 
 `timescale 1ns / 1ps
 
-module tb_cpu_top_mext_rdcyc;
+module tb_cpu_top_sc_rdcyc;
 
     parameter HALT_WINDOW = 5;      // halt-instr fetch hits before declaring halt
-    parameter TIMEOUT     = 500000; // increased for matmul/dotprod (300K+ cycles)
-    parameter USE_BTB     = 0;      // 0 = always-not-taken (pipeline no-BTB baseline)
+    parameter TIMEOUT     = 2000000; // single-cycle is ~4-5× slower in cycles than pipelined
 
     reg clk, reset;
 
-    cpu_top_mext_rdcyc #(.USE_BTB(USE_BTB)) uut (
+    cpu_top_sc_rdcyc uut (
         .clk(clk), .reset(reset)
     );
 
     initial clk = 0;
     always #5 clk = ~clk;
 
-    // ---- Halt detection ----
-    // Halt instruction is `beq x0,x0,0` (32'h00000063) in startup.S. We count
-    // how many times IF fetches that exact encoding. We don't require the PC
-    // to be stable — with BTB disabled, the halt BEQ mispredicts every
-    // iteration so PC cycles through 0x08 -> 0x0C -> 0x10 -> 0x08 ... We just
-    // need to see the halt instruction enter IF enough times to be confident
-    // execution has truly reached the halt loop (not a speculative fetch
-    // during _start's jal). Works whether BTB is on or off.
+    // ---- Halt detection (instruction-based, same as pipelined TB) ----
     localparam [31:0] HALT_INSTR = 32'h00000063;
     integer halt_hits;
     reg     halted;
@@ -70,18 +53,13 @@ module tb_cpu_top_mext_rdcyc;
     reg [31:0] start_cycle, end_cycle;
 
     initial begin
-        // Load data memory (silently ignored if data.hex doesn't exist)
         $readmemh("data.hex", uut.dmem.mem);
-        // instructions.hex auto-loaded by instruction_memory
-
-//        $dumpfile("tb_cpu_top_mext_rdcyc.vcd");
-//        $dumpvars(0, tb_cpu_top_mext_rdcyc);
 
         $display("====================================================");
-        $display("  PHASE 4 BENCHMARK DRIVER — cpu_top_mext_rdcyc     ");
+        $display("  PHASE 4 BENCHMARK DRIVER — cpu_top_sc_rdcyc       ");
         $display("====================================================");
 
-        // ---- RDCYC sanity check (before benchmark) ----
+        // ---- RDCYC sanity check ----
         reset = 1'b1;
         repeat(3) @(posedge clk);
         #1;
@@ -90,7 +68,6 @@ module tb_cpu_top_mext_rdcyc;
             $finish;
         end
 
-        // Check counter increments correctly while still in reset-released mode
         @(negedge clk); reset = 1'b0;
         repeat(4) @(posedge clk); #1;
         if (uut.cycle_counter < 32'd3) begin
@@ -99,13 +76,12 @@ module tb_cpu_top_mext_rdcyc;
         end
         $display("PASS: cycle_counter increments correctly");
 
-        // ---- Reset again for clean benchmark run ----
+        // ---- Reset for clean benchmark run ----
         reset = 1'b1;
         repeat(5) @(posedge clk);
         @(negedge clk); reset = 1'b0;
         $display("PASS: reset done");
 
-        // Capture start cycle (counter just cleared, pipeline filling)
         @(posedge clk); #1;
         start_cycle = uut.cycle_counter;
 
@@ -114,7 +90,6 @@ module tb_cpu_top_mext_rdcyc;
         while (!halted && cycle_count < TIMEOUT) begin
             @(posedge clk); #1;
             cycle_count = cycle_count + 1;
-//            $display("  Running... %0d cycles (PC=0x%08h, halt_hits=%0d)", cycle_count, uut.if_pc_out, halt_hits);
             if (cycle_count % 10000 == 0)
                 $display("  Running... %0d cycles (PC=0x%08h, halt_hits=%0d)", cycle_count, uut.if_pc_out, halt_hits);
         end
@@ -122,7 +97,7 @@ module tb_cpu_top_mext_rdcyc;
         // ---- Report ----
         $display("====================================================");
         if (!halted) begin
-            $display("TIMEOUT: benchmark did not reach halt within %0d cycles", TIMEOUT);
+            $display("TIMEOUT: benchmark did not halt within %0d cycles", TIMEOUT);
         end else begin
             end_cycle = uut.cycle_counter;
             $display("BENCHMARK COMPLETE");

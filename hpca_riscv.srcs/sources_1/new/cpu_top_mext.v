@@ -239,6 +239,7 @@ module cpu_top_mext (
     mul_unit mul (
         .a      (ex_rs1_fwd),
         .b      (ex_rs2_fwd),
+        .c      (ex_rs1_fwd),         // Phase 3: MAC c-input = rs1 (preserves old rd = rs1 + rs1*rs2 semantics)
         .ex_op  (ex_op),
         .result (ex_mul_result)
     );
