@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-RV32I CPU implemented in Verilog. **5-stage pipelined CPU with 2-bit BTB branch prediction, M extension (MUL), and custom ML instructions (MAC, ReLU, RDCYC)** — completed M.Tech term project. Target: Xilinx Vivado simulation, optional Artix-7 / Zynq synthesis.
+RV32I CPU implemented in Verilog. **5-stage pipelined CPU with 2-bit BTB branch prediction, M extension (MUL), and custom ML instructions (MAC, ReLU, RDCYC)** — completed M.Tech term project. Target: Xilinx Vivado simulation, Zynq Z-7020 (Zybo Z2) synthesis.
+
+**Synthesis note:** Both `data_memory.v` and `instruction_memory.v` are restructured as 4 parallel byte-banks indexed by word address (canonical FPGA pattern), with `(* ram_style = "distributed" *)` attribute on each bank to force LUTRAM inference. Assumes naturally-aligned accesses (RV32I + GCC always aligned). Cost: ~2120 LUTs per 16 KB memory on Zynq Z-7020 (negligible — board has ~53K LUTs). See **Phase 5** below for full synthesis flow, timing results, and analysis.
 
 **Harvard architecture**: separate instruction and data memories (both 16 KB, byte-addressable). No cache, no DRAM, no OS.
 
@@ -239,6 +241,273 @@ copy tests\<name>.data.hex data.hex
 
 ---
 
+## Phase 5 — Synthesis & FPGA Timing Analysis (complete) ✅
+
+Phase 5 extends the project from pure simulation into **post-synthesis static timing
+analysis** on Zynq Z-7020 (Zybo Z2). Goal: convert simulation cycle counts into
+real-world execution time by measuring actual achievable clock frequency.
+
+### Why this phase was needed
+
+Vivado behavioral simulation uses an **abstract clock** — both SC and pipeline tick
+at the same rate. Cycle-count comparisons (Phase 4) make pipeline appear *slower*
+than SC because pipelines accumulate stall and flush cycles. To prove the pipeline's
+real-world advantage, we need each design's **actual clock period**, which only
+comes from synthesis timing reports.
+
+```
+real_time = cycle_count (simulation) × clock_period (synthesis)
+```
+
+### Required code changes for synthesis
+
+The project was simulation-only. Synthesis revealed several issues that required
+code changes to all targets while preserving simulation behavior:
+
+#### 1. Memory inference failure (data_memory.v, instruction_memory.v)
+
+**Original error:**
+```
+[Synth 8-3391] Unable to infer a block/distributed RAM for 'mem_reg'
+because the memory pattern used is not supported.
+Failed to dissolve the memory into bits because the number of bits (131072) is too large.
+```
+
+**Root cause:** Original memories used `reg [7:0] mem [0:16383]` accessed with
+computed byte addresses (`mem[a], mem[a+1], mem[a+2], mem[a+3]`). Vivado cannot
+recognize this as a RAM pattern — it requires a single read port per array. With
+4 simultaneous reads at computed offsets, Vivado tried to fall back to discrete
+flip-flops (131072 of them), which is too large.
+
+**Fix:** Restructured both memories as **4 parallel byte-banks indexed by word
+address** (canonical FPGA-friendly pattern). Each bank gets `(* ram_style = "distributed" *)`
+attribute to force LUTRAM inference. Assumes naturally-aligned accesses
+(RV32I + GCC always emits aligned).
+
+```verilog
+(* ram_style = "distributed" *) reg [7:0] mem0 [0:NWORDS-1];  // byte 0 (LSB)
+(* ram_style = "distributed" *) reg [7:0] mem1 [0:NWORDS-1];  // byte 1
+(* ram_style = "distributed" *) reg [7:0] mem2 [0:NWORDS-1];  // byte 2
+(* ram_style = "distributed" *) reg [7:0] mem3 [0:NWORDS-1];  // byte 3
+```
+
+For `instruction_memory.v`, a temp byte array preserves `$readmemh("instructions.hex")`
+loading from the original byte format, then distributes to banks.
+
+External port interfaces unchanged — no changes needed in any top-level file or
+testbench. Cost: ~2120 LUTs per 16 KB memory on Zynq Z-7020.
+
+#### 2. Logic trimming due to no output ports
+
+`cpu_top_mext_rdcyc` and `cpu_top_sc_rdcyc` originally had only `clk` and `reset`
+as ports — no outputs. Vivado's optimizer sees nothing driving external pins and
+**trims away the entire CPU** during synthesis. First synthesis pass showed only
+2 LUTs and 63 registers used (just the trimming residue).
+
+**Fix:** Added 3 output ports to both tops to anchor the design:
+```verilog
+output wire [31:0] o_pc,            // current PC (IF stage)
+output wire [31:0] o_cycle_counter, // RDCYC counter
+output wire [31:0] o_wb_data        // writeback data — keeps pipeline alive
+```
+With these driving real outputs, Vivado preserves the full datapath.
+
+#### 3. Missing clock constraint
+
+Without an `.xdc` file, Vivado doesn't know `clk` is a real clock → cannot run
+timing analysis → WNS reports as `NA`.
+
+**Fix:** Added `constraints.xdc`:
+```tcl
+create_clock -period 10.000 -name clk [get_ports clk]
+```
+100 MHz target frequency (10 ns period).
+
+### Synthesis flow (reproducible steps)
+
+```
+1. Set top in Sources panel: cpu_top_sc_rdcyc OR cpu_top_mext_rdcyc
+2. Add constraints.xdc with create_clock command above
+3. Flow Navigator → Run Synthesis (defaults: local host, 2 jobs)
+4. Open Synthesized Design when complete
+5. In Tcl console:
+     report_timing_summary  -file timing_<top>.txt
+     report_utilization     -file util_<top>.txt
+```
+
+### Synthesis utilization results (Zynq Z-7020)
+
+| Resource | SC (`cpu_top_sc_rdcyc`) | Pipeline (`cpu_top_mext_rdcyc`) |
+|----------|------------------------|--------------------------------|
+| LUT as Logic | 1202 | 1698 |
+| LUT as Distributed RAM | 2112 | 2120 |
+| Total LUTs | 3314 (6.23%) | 3818 (7.18%) |
+| Flip Flops | 64 | 1519 |
+| DSP48E1 (multipliers) | 3 | 3 |
+| Block RAM | 0 | 0 (using LUTRAM) |
+| F7/F8 Muxes | 1089 / 544 | 1244 / 571 |
+
+**Observations:**
+- Pipeline uses ~1455 more flip-flops (pipeline registers + cycle counter wider
+  than SC's 64 just-cycle-counter)
+- Both use 3 DSP48E1 — Vivado mapped the multiplier to dedicated DSP slices
+- Logic LUT difference (1202 → 1698) is forwarding/hazard logic added in pipeline
+- LUTRAM cost is identical — both use the same memories
+
+### Synthesis timing results
+
+#### Single-cycle (`cpu_top_sc_rdcyc`)
+```
+WNS = +5.612 ns  (timing MET at 100 MHz target)
+Critical path  = 10.000 - 5.612 = 4.388 ns
+Reported max freq = 1 / 4.388 ns ≈ 227.9 MHz
+Critical path: pc_reg[4] → CARRY4 chain × 8 → LUT6 → pc_reg[30]  (PC+4 adder)
+Logic levels: 9 (CARRY4=8, LUT6=1)
+```
+
+#### Pipeline (`cpu_top_mext_rdcyc`)
+```
+WNS = -5.683 ns  (timing NOT met at 100 MHz target)
+Critical path  = 10.000 + 5.683 = 15.683 ns
+True max freq = 1 / 15.683 ns ≈ 63.8 MHz
+Critical path: mem_wb/wb_reg_write → LUT × 2 → DSP48E1 × 2 → CARRY4 × 4 → LUT × 2
+                → ex_mem/mem_alu_result_reg
+Logic levels: 14 (CARRY4=5, DSP48E1=2, LUT2=1, LUT5=1, LUT6=5)
+Data path delay: 15.546 ns (logic 9.125 ns / 58.7%, route 6.421 ns / 41.3%)
+```
+
+### **Critical interpretation: SC max-freq number is misleading**
+
+The 227.9 MHz SC figure is **mathematically correct but practically wrong**. It
+reflects only the **PC update path** (the only register-to-register path in SC).
+The MAC/MUL combinational chain (IMEM → decode → multiply → writeback to regfile)
+is **unconstrained** in SC because:
+
+- **Start point** = IMEM output = combinational distributed-RAM read = NOT a flip-flop
+- **End point** = register file write port = IS a flip-flop
+
+Vivado's static timing analysis only times **flip-flop to flip-flop** paths. Since
+the MAC path starts from a combinational source, Vivado treats it as unconstrained
+and excludes it from WNS. The check_timing report flags this:
+```
+checking no_input_delay  (1)   ← HIGH
+checking no_output_delay (96)  ← HIGH
+```
+
+In contrast, the pipeline has flip-flops between every stage (IF/ID, ID/EX,
+EX/MEM, MEM/WB registers). The MAC path becomes register-to-register
+(WB-forwarded operand → MUL → EX/MEM register), so Vivado fully constrains it
+and reports the true 15.683 ns critical path.
+
+**Conclusion:** Both designs share the same combinational multiplier hardware, so
+their true clock periods should be approximately equal (~15 ns). Pipeline timing
+is honest; SC timing hides the multiplier behind unconstrained paths.
+
+### True execution time estimates
+
+Using **15.683 ns** for both (the honest multiplier-bound clock period):
+
+| Benchmark | Cycles SC | Cycles PL+BTB | Real time SC | Real time PL+BTB | Winner |
+|-----------|-----------|---------------|--------------|------------------|--------|
+| fib_20 | 112 | 121 | 1756 ns | 1898 ns | SC (1.08×) |
+| matmul_8x8 | 5267 | 7614 | 82.6 µs | 119.4 µs | SC (1.45×) |
+| grad_descent | 4831 | 7543 | 75.8 µs | 118.3 µs | SC (1.56×) |
+| matmul_8x8_nocustom | 9857 | 12211 | 154.6 µs | 191.5 µs | SC (1.24×) |
+| grad_desc_nocustom | 13440 | 18642 | 210.8 µs | 292.4 µs | SC (1.39×) |
+
+**Counterintuitive finding:** SC outperforms pipeline in real time across all
+benchmarks because the unpipelined multiplier dominates the pipeline's clock
+period, negating the pipeline's stage-shortening advantage. Combined with
+pipeline's stall/flush cycle overhead, SC wins on net execution time.
+
+### **Root-cause analysis: pipeline negation by single-stage MUL**
+
+The fundamental rule of pipelining:
+
+> **A pipeline is only as fast as its slowest stage.**
+
+Our `mul_unit.v` is purely combinational — the entire 32×32 multiply + carry-chain
+addition completes in one cycle. When placed in the EX stage of the pipeline, it
+forces:
+- EX stage delay ≥ 15 ns (DSP cascade + carry chain + WB-forward routing)
+- Therefore pipeline clock period ≥ 15 ns
+- All other stages (IF ~3 ns, ID ~2 ns, MEM ~5 ns, WB ~2 ns) have huge slack but
+  must wait for EX
+
+This is why the pipeline delivers no clock-period advantage. The pipeline pays
+all the costs of pipelining (extra registers, hazards, stalls, flushes) but
+captures none of the benefits because one stage is 5× slower than the others.
+
+### Recommended fix (future work): pipeline the multiplier
+
+Production CPUs (ARM Cortex-A, RISC-V Rocket, x86) all use **multi-cycle
+pipelined multipliers**. Splitting `mul_unit.v` into 3 internal stages would:
+
+```
+Original (1 stage, 15 ns):
+  rs1, rs2 ──► [combinational mul + add] ──► result
+
+Pipelined (3 stages, ~5 ns each):
+  rs1, rs2 ──► MUL1 ──► [reg] ──► MUL2 ──► [reg] ──► MUL3 ──► [reg] ──► result
+```
+
+Expected impact:
+- Pipeline clock period: 15 ns → ~5 ns (3× reduction → ~200 MHz)
+- MAC instruction latency: 1 cycle → 3 cycles (throughput unchanged for
+  back-to-back MACs)
+- Net win: ~3× real-time speedup despite higher cycle count
+
+**Implementation difficulty: medium (1–2 days).** Required changes:
+1. Split `mul_unit.v` into MUL1/MUL2/MUL3 stages with internal pipeline registers
+2. Add `mul_valid` output and stall logic in `hazard_unit` for MAC RAW hazards
+3. Extend forwarding network to handle MUL2/MUL3 stage outputs
+4. Resolve regfile write-port conflicts when 1-cycle ALU instruction follows MAC
+5. Re-verify all benchmarks pass with new MAC latency
+
+### Summary table (Phase 5 deliverables)
+
+| Item | Result |
+|------|--------|
+| Target FPGA | Zynq Z-7020 (Zybo Z2), part `xc7z020clg400-1` |
+| Vivado version | 2020.2 |
+| SC LUT usage | 3314 (6.23% of 53200) |
+| Pipeline LUT usage | 3818 (7.18% of 53200) |
+| DSP usage (both) | 3 / 220 (1.36%) |
+| SC reported max freq | 227.9 MHz (PC path only — misleading) |
+| Pipeline true max freq | 63.8 MHz (multiplier-bound) |
+| True SC max freq (estimated) | ~63.8 MHz (same multiplier bottleneck) |
+| Critical path bottleneck | Combinational multiplier (mul_unit.v) |
+| Recommended fix | 3-stage pipelined multiplier |
+
+### Synthesis-related file changes
+
+| File | Change |
+|------|--------|
+| `data_memory.v` | Restructured to 4 byte-banks indexed by word address; added `ram_style = "distributed"` attribute |
+| `instruction_memory.v` | Same restructuring; uses temp byte array to preserve `$readmemh` byte-format compatibility |
+| `cpu_top_mext_rdcyc.v` | Added `o_pc`, `o_cycle_counter`, `o_wb_data` output ports + assignments to prevent logic trimming |
+| `cpu_top_sc_rdcyc.v` | Same output port additions as above |
+| `constraints.xdc` | NEW — `create_clock -period 10.000 -name clk [get_ports clk]` |
+
+### Key insight for report
+
+The Phase 5 work uncovers a fundamental architecture lesson:
+
+> The pipeline implementation does not deliver the expected clock-period reduction
+> because the multiplier is implemented as a single-cycle combinational unit
+> (~15 ns critical path). To achieve the theoretical pipeline speedup, the
+> multiplier itself must be internally pipelined (3–5 stages) — the standard
+> approach in production processors. Without this, the pipeline pays all the
+> costs of pipelining (registers, hazards, stalls) but captures none of the
+> clock-period benefits because one stage dominates the timing.
+
+This is itself a strong result: it demonstrates **why** real CPUs design
+multipliers as multi-stage units, and **why** simply splitting a single-cycle
+datapath into pipeline stages is insufficient if any single stage contains
+disproportionately deep combinational logic.
+
+---
+
 ## Development Environment
 
 Primary IDE: **Xilinx Vivado** (`hpca_riscv.xpr`). No Makefile — build, simulation, synthesis through Vivado GUI or Tcl console.
@@ -338,6 +607,9 @@ PC → imem → [instruction fields]
 - **Phase 2** ✅ 16-entry BTB + 2-bit saturating predictor (`cpu_top_pipelined_branch.v`)
 - **Phase 3** ✅ M extension (MUL) + custom ML (MAC, ReLU) (`cpu_top_mext.v`)
 - **Phase 4** ✅ RDCYC cycle counter, 3-operand MAC, single-cycle top, 9-benchmark suite, performance report (`cpu_top_mext_rdcyc.v`, `cpu_top_sc_rdcyc.v`)
+- **Phase 5** ✅ Zynq Z-7020 synthesis & post-synthesis timing analysis. Memory restructured to 4 byte-banks for LUTRAM inference; output ports added to prevent logic trimming; `constraints.xdc` with 100 MHz clock. SC: 4.388 ns critical path (PC adder only — MAC path unconstrained). Pipeline: 15.683 ns critical path (multiplier-bound, fully constrained). True execution time: SC wins on all benchmarks because unpipelined multiplier dominates pipeline clock period.
+
+**Future work:** Pipeline `mul_unit.v` into 3 internal stages (~5 ns each) → expected ~3× pipeline real-time speedup. Requires hazard/forwarding/write-port-arbitration changes. ~1–2 days effort.
 
 **Locked architectural decisions:**
 - Branch resolves in EX (2-cycle flush penalty on mispredict)

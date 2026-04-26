@@ -11,7 +11,7 @@
 //   ex_op encoding (widened to 3 bits):
 //     000 = use ALU result
 //     001 = MUL   (result = rs1*rs2)
-//     010 = MAC   (result = rd + rs1*rs2)   â†? 3-operand (Phase 4)
+//     010 = MAC   (result = rd + rs1*rs2)   ï¿½? 3-operand (Phase 4)
 //     011 = RELU  (result = max(rs1, 0))
 //     100 = RDCYC (result = cycle_counter)
 //
@@ -28,8 +28,11 @@
 module cpu_top_mext_rdcyc #(
     parameter USE_BTB = 1   // 1 = BTB active; 0 = always-not-taken (for benchmark comparison)
 ) (
-    input clk,
-    input reset
+    input  wire        clk,
+    input  wire        reset,
+    output wire [31:0] o_pc,           // current PC (IF stage)
+    output wire [31:0] o_cycle_counter, // cycle counter (for RDCYC)
+    output wire [31:0] o_wb_data       // writeback data (keeps pipeline logic alive)
 );
 
     // ================================================================
@@ -448,5 +451,10 @@ module cpu_top_mext_rdcyc #(
         .flush_if_id(flush_if_id_raw),
         .flush_id_ex(flush_id_ex_raw)
     );
+
+    // ---- Output port connections (prevent logic trimming during synthesis) ----
+    assign o_pc            = if_pc_out;
+    assign o_cycle_counter = cycle_counter;
+    assign o_wb_data       = wb_data;
 
 endmodule
