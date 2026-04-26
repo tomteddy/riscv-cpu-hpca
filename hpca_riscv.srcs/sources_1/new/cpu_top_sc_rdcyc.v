@@ -25,8 +25,11 @@
 `timescale 1ns / 1ps
 
 module cpu_top_sc_rdcyc (
-    input clk,
-    input reset
+    input  wire        clk,
+    input  wire        reset,
+    output wire [31:0] o_pc,
+    output wire [31:0] o_cycle_counter,
+    output wire [31:0] o_wb_data
 );
 
     // ================================================================
@@ -210,5 +213,10 @@ module cpu_top_sc_rdcyc (
         (jump && opcode == 7'b1101111) ? pc_branch :
         branch_taken                   ? pc_branch :
                                          pc_plus4;
+
+    // ---- Output port connections (prevent logic trimming during synthesis) ----
+    assign o_pc            = if_pc_out;
+    assign o_cycle_counter = cycle_counter;
+    assign o_wb_data       = wb_data;
 
 endmodule
