@@ -12,6 +12,7 @@
  */
 
 #include "../tools/custom_ops.h"
+#include "validate.h"
 
 #define N 32
 
@@ -28,5 +29,6 @@ int main(void) {
     int i;
     for (i = 0; i < N; i++)
         y[i] = relu_custom(x[i]);
+    validate_write(BENCH_ID_RELU_32, y, N);
     return 0;
 }

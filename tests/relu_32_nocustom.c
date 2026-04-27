@@ -10,6 +10,8 @@
  * Compile:  tools\build.bat tests\relu_32_nocustom.c
  */
 
+#include "validate.h"
+
 #define N 32
 
 int x[N] = {
@@ -25,5 +27,6 @@ int main(void) {
     int i;
     for (i = 0; i < N; i++)
         y[i] = (x[i] & 0x80000000) ? 0 : x[i];  /* branchless ReLU */
+    validate_write(BENCH_ID_RELU_32_NOCUST, y, N);
     return 0;
 }

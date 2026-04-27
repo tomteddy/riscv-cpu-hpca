@@ -9,6 +9,8 @@
  * Compile:  tools\build.bat tests\grad_descent_nocustom.c
  */
 
+#include "validate.h"
+
 #define ROWS 8
 #define COLS 4
 #define ITERS 10
@@ -76,5 +78,6 @@ int main(void) {
             w[j] -= (grad[j] >> LR_SHIFT);
     }
 
+    validate_write(BENCH_ID_GRAD_DESC_NOCUST, w, COLS);
     return 0;
 }

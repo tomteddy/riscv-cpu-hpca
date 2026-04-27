@@ -28,6 +28,7 @@
  */
 
 #include "../tools/custom_ops.h"
+#include "validate.h"
 
 #define ROWS 8
 #define COLS 4
@@ -92,5 +93,6 @@ int main(void) {
             w[j] -= (grad[j] >> LR_SHIFT);
     }
 
+    validate_write(BENCH_ID_GRAD_DESC, w, COLS);
     return 0;
 }

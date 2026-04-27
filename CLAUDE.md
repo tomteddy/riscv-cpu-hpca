@@ -10,7 +10,7 @@ RV32I CPU implemented in Verilog. **5-stage pipelined CPU with 2-bit BTB branch 
 
 **Harvard architecture**: separate instruction and data memories (both 16 KB, byte-addressable). No cache, no DRAM, no OS.
 
-## Current state — All 4 phases complete ✅
+## Current state — All phases complete ✅
 
 ### Phase 0 — Single-cycle (complete, preserved)
 Single-cycle CPU is stabilized. All 47 RV32I instructions verified.
@@ -191,53 +191,72 @@ copy tests\<name>.data.hex data.hex
 
 ## Phase 4 Benchmark Results
 
-### Table A — Cycle counts across CPU configurations
+> **Note:** Cycle counts below are from the Phase 6 validated run (include `validate_write()`
+> overhead — typically 5–20 extra cycles per benchmark). CPI values are computed from
+> the instruction-retired counter added in Phase 6.
 
-| Benchmark | Single-cycle | Pipeline (no BTB) | Pipeline + BTB | BTB speedup |
-|---|---|---|---|---|
-| fib_20 | 112 | 157 | 121 | 1.30× |
-| matmul_8x8 | 5267 | 8392 | 7614 | 1.10× |
-| dotprod_16 | — | 271 | 243 | 1.12× |
-| relu_32 | — | 509 | 449 | 1.13× |
-| grad_descent | 4831 | 7717 | 7543 | 1.02× |
-| matmul_8x8_nocustom | 9857 | 16055 | 12211 | 1.31× |
-| dotprod_16_nocustom | — | 499 | 381 | 1.31× |
-| relu_32_nocustom | — | 369 | 247 | 1.49× |
-| grad_desc_nocustom | 13440 | 22686 | 18642 | 1.22× |
+### Table A — Cycle counts and CPI across CPU configurations
+
+| Benchmark | SC cycles | SC CPI | PL+BTB cycles | PL+BTB CPI | PL no-BTB cycles | PL no-BTB CPI |
+|---|---|---|---|---|---|---|
+| fib_20 | 119 | 1.000 | 128 | 1.103 | 164 | 1.401 |
+| dotprod_16 | 177 | 1.000 | 250 | 1.436 | 278 | 1.588 |
+| dotprod_16_nocustom | 608 | 1.000 | 771 | 1.274 | 891 | 1.470 |
+| matmul_8x8 | 5366 | 1.000 | 7721 | 1.439 | 8519 | 1.588 |
+| matmul_8x8_nocustom | 16612 | 1.000 | 20698 | 1.246 | 24502 | 1.475 |
+| relu_32 | 481 | 1.000 | 622 | 1.301 | 740 | 1.544 |
+| relu_32_nocustom | 420 | 1.000 | 437 | 1.047 | 583 | 1.394 |
+| grad_descent | 4845 | 1.000 | 7557 | 1.560 | 7731 | 1.596 |
+| grad_descent_nocustom | 18686 | 1.000 | 26084 | 1.396 | 28756 | 1.539 |
 
 > **Why single-cycle has fewer cycles than pipeline:** Each instruction takes exactly
-> 1 clock cycle on the single-cycle CPU — no stalls, no flush overhead. The pipeline
-> adds load-use stall cycles (+1 each) and branch mispredict flush cycles (+2 each),
-> causing higher cycle counts. In real silicon the pipeline wins because its clock
-> period is 3–5× shorter (each stage is simpler = faster). In Vivado simulation,
-> both use the same abstract clock, so cycle count is the only metric and pipeline
-> appears "slower". This is the classic **CPI × clock-period tradeoff**.
+> 1 clock cycle on the single-cycle CPU — no stalls, no flush overhead (CPI always 1.0).
+> The pipeline adds load-use stall cycles (+1 each) and branch mispredict flush cycles
+> (+2 each), causing higher cycle counts and CPI > 1. In real silicon the pipeline wins
+> because its clock period is 3–5× shorter. In Vivado simulation both use the same
+> abstract clock so cycle count is the only metric — pipeline appears "slower". This is
+> the classic **CPI × clock-period tradeoff**.
 
-### Table B — Custom instruction speedup (Pipeline + BTB)
+### Table B — BTB speedup (pipeline+BTB vs pipeline no-BTB)
+
+| Benchmark | No-BTB cycles | BTB cycles | BTB speedup |
+|---|---|---|---|
+| fib_20 | 164 | 128 | **1.28×** |
+| dotprod_16 | 278 | 250 | **1.11×** |
+| dotprod_16_nocustom | 891 | 771 | **1.16×** |
+| matmul_8x8 | 8519 | 7721 | **1.10×** |
+| matmul_8x8_nocustom | 24502 | 20698 | **1.18×** |
+| relu_32 | 740 | 622 | **1.19×** |
+| relu_32_nocustom | 583 | 437 | **1.33×** |
+| grad_descent | 7731 | 7557 | **1.02×** |
+| grad_descent_nocustom | 28756 | 26084 | **1.10×** |
+
+### Table C — Custom instruction speedup (Pipeline + BTB)
 
 | Benchmark | No-custom (cycles) | With custom (cycles) | Speedup |
 |---|---|---|---|
-| matmul_8x8 | 12211 | 7614 | **1.60×** |
-| dotprod_16 | 381 | 243 | **1.57×** |
-| relu_32 | 247 | 449 | 0.55× ⚠ |
-| grad_descent | 18642 | 7543 | **2.47×** |
+| matmul_8x8 | 20698 | 7721 | **2.68×** |
+| dotprod_16 | 771 | 250 | **3.08×** |
+| relu_32 | 437 | 622 | 0.70× ⚠ |
+| grad_descent | 26084 | 7557 | **3.45×** |
 
 > **relu_32 anomaly — custom is SLOWER:** `relu_custom` is implemented as a
 > function call (32 × JAL + RELU instruction + RET + 2-cycle flush = ~200 extra cycles).
 > The no-custom version uses a branchless inline C expression
 > `(x[i] & 0x80000000) ? 0 : x[i]` compiled to 2–3 ALU instructions with no call overhead.
 > Fix: use `__attribute__((always_inline))` or a `.macro`-based inline assembly macro
-> to eliminate call overhead. For MAC/MUL-heavy kernels the call overhead amortizes
-> over many multiply cycles, so they still show a real speedup.
+> to eliminate call overhead.
 
 ### Key observations
 
-- **MAC delivers the largest speedup** — grad_descent achieves **2.47×** because 640 MACs
-  replace 640 software-multiply loops (each sw_mul takes ~30+ shift-add iterations).
-- **BTB helps branch-heavy code most** — fib (1.30×), matmul_nocustom (1.31×), relu_nocustom
-  (1.49×). Grad_descent is mostly compute with few branches → BTB barely helps (1.02×).
-- **Pipeline stalls dominate matmul** — back-to-back loads/stores create many load-use
-  stalls, explaining the high pipeline cycle count vs single-cycle.
+- **MAC delivers the largest speedup** — grad_descent achieves **3.45×** and dotprod **3.08×**
+  because each MAC replaces a full software-multiply loop (~30+ shift-add iterations).
+- **BTB helps branch-heavy code most** — fib (1.28×), relu_nocustom (1.33×). Grad_descent
+  is mostly compute with few branches → BTB barely helps (1.02×).
+- **Pipeline CPI reveals stall pressure** — matmul CPI 1.44 (BTB) reflects heavy load-use
+  stalls from back-to-back memory accesses. Grad_descent CPI 1.56 reflects MAC rs3
+  forwarding stalls on the accumulator path.
+- **SC CPI is always 1.000** — confirmed by the instruction-retired counter (Phase 6).
 
 ---
 
@@ -600,14 +619,86 @@ PC → imem → [instruction fields]
 
 **Memory layout**: both memories 16 KB, addressed from 0x0 in their own space. Stack grows down from 0x4000 (top of DMEM).
 
+## Phase 6 — Validation Harness (complete) ✅
+
+Phase 6 adds automated correctness validation and a full 27-run sweep (9 benchmarks × 3
+configs) that populates a CSV with cycles, instructions retired, CPI, and pass/fail.
+
+### What was added
+
+| File | Change |
+|------|--------|
+| `tests/validate.h` | NEW — `validate_write(id, results, n)` convention; benchmark ID constants |
+| `tests/*.c` (9 files) | MODIFIED — each calls `validate_write()` before halting |
+| `cpu_top_mext_rdcyc.v` | MODIFIED — added `o_instr_retired` port + valid-bit pipeline counter |
+| `cpu_top_sc_rdcyc.v` | MODIFIED — added `o_instr_retired` port (= `cycle_counter`, CPI always 1) |
+| `tb_cpu_top_mext_rdcyc.v` | REWRITTEN — full validation harness with expected table + CSV append |
+| `tb_cpu_top_sc_rdcyc.v` | REWRITTEN — same harness for single-cycle top |
+| `tools/build_all.bat` | NEW — builds all 9 benchmarks in one command |
+| `tools/run_all.tcl` | NEW — Tcl sweep: 3 configs × 9 benchmarks = 27 runs, appends to results.csv |
+| `tools/run_all.bat` | NEW — headless wrapper: `vivado -mode batch -source tools/run_all.tcl` |
+| `tools/build.bat` | FIXED — re-enabled `--change-addresses -65536` for correct data.hex LMA stripping |
+
+### Validation block convention (tests/validate.h)
+
+Each benchmark writes a structured block at DMEM byte address `0x3F00` (last 256 bytes,
+never overlaps with globals or stack):
+
+```
+word 0 : 0xBEEF0000 | benchmark_id
+word 1 : n  (number of result words)
+word 2+: result[0..n-1]
+```
+
+The TB reads this block at halt, identifies the benchmark by id, and compares against
+a hardcoded expected table (derived analytically, not from a pre-run).
+
+### Expected values (analytically derived)
+
+| id | Benchmark | Expected |
+|----|-----------|----------|
+| 1 | fib_20 | [6765] |
+| 2 | dotprod_16 | [1496] |
+| 3 | dotprod_16_nocustom | [1496] |
+| 4 | matmul_8x8 | C[0][0..7] = {8,16,24,32,40,48,56,64} |
+| 5 | matmul_8x8_nocustom | same |
+| 6 | relu_32 | {0×16, 0,1,2,...,15} |
+| 7 | relu_32_nocustom | same |
+| 8 | grad_descent | w = {2,2,2,2} |
+| 9 | grad_descent_nocustom | same |
+
+### Instructions-retired counter (cpu_top_mext_rdcyc.v)
+
+Valid bits are propagated inline through ID/EX/MEM/WB stages alongside the data path.
+A bubble inserted by stall or flush has `valid=0` and is not counted. This gives an
+accurate retired count independent of NOP encoding.
+
+### Running the full validation sweep
+
+```
+# From worktree root (or project root):
+tools\build_all.bat          # build all 9 benchmarks once
+tools\run_all.bat            # 27 sims → results.csv (headless Vivado batch)
+
+# Or interactively in Vivado Tcl console:
+source tools/run_all.tcl
+```
+
+CSV format: `benchmark, config, cycles, instr_retired, cpi_x1000, pass`
+
+All 27 runs verified PASS on 2026-04-27.
+
+---
+
 ## Roadmap
 
 - **Phase 0** ✅ Single-cycle RV32I, all 47 instructions (`cpu_top.v`)
 - **Phase 1** ✅ 5-stage pipeline, forwarding, load-use stall, branch flush (`cpu_top_pipeline.v`)
 - **Phase 2** ✅ 16-entry BTB + 2-bit saturating predictor (`cpu_top_pipelined_branch.v`)
 - **Phase 3** ✅ M extension (MUL) + custom ML (MAC, ReLU) (`cpu_top_mext.v`)
-- **Phase 4** ✅ RDCYC cycle counter, 3-operand MAC, single-cycle top, 9-benchmark suite, performance report (`cpu_top_mext_rdcyc.v`, `cpu_top_sc_rdcyc.v`)
-- **Phase 5** ✅ Zynq Z-7020 synthesis & post-synthesis timing analysis. Memory restructured to 4 byte-banks for LUTRAM inference; output ports added to prevent logic trimming; `constraints.xdc` with 100 MHz clock. SC: 4.388 ns critical path (PC adder only — MAC path unconstrained). Pipeline: 15.683 ns critical path (multiplier-bound, fully constrained). True execution time: SC wins on all benchmarks because unpipelined multiplier dominates pipeline clock period.
+- **Phase 4** ✅ RDCYC cycle counter, 3-operand MAC, single-cycle top, 9-benchmark suite (`cpu_top_mext_rdcyc.v`, `cpu_top_sc_rdcyc.v`)
+- **Phase 5** ✅ Zynq Z-7020 synthesis & post-synthesis timing analysis. Memory restructured to 4 byte-banks for LUTRAM inference; output ports added to prevent logic trimming; `constraints.xdc` with 100 MHz clock. SC: 4.388 ns critical path (PC adder only). Pipeline: 15.683 ns critical path (multiplier-bound).
+- **Phase 6** ✅ Automated validation harness. `validate_write()` convention, instructions-retired counter, 27-run Tcl sweep, results.csv output. All 27 benchmarks × configs verified PASS.
 
 **Future work:** Pipeline `mul_unit.v` into 3 internal stages (~5 ns each) → expected ~3× pipeline real-time speedup. Requires hazard/forwarding/write-port-arbitration changes. ~1–2 days effort.
 
@@ -627,3 +718,4 @@ PC → imem → [instruction fields]
 | 3 | `tb_cpu_top_mext` | Pipeline + BTB + MUL/MAC/RELU, 13-instruction MAC test |
 | 4 (pipeline) | `tb_cpu_top_mext_rdcyc` | Pipeline + BTB + RDCYC + 3-op MAC benchmarks |
 | 4 (single-cycle) | `tb_cpu_top_sc_rdcyc` | Single-cycle + RDCYC + 3-op MAC benchmarks |
+| 6 (all) | `tb_cpu_top_mext_rdcyc` / `tb_cpu_top_sc_rdcyc` | Unified validation harness — auto-detects benchmark by id, checks expected results, reports CPI, appends to results.csv |

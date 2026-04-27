@@ -45,8 +45,7 @@ if errorlevel 1 goto :error
 echo [3/4] Extracting data memory -^> %BASE%.data.hex ...
 REM --change-addresses -65536 strips the 0x10000 LMA offset added by link.ld
 REM so that $readmemh sees byte addresses starting from 0 (dmem.mem[0]).
-@REM "%OBJCOPY%" -O verilog --only-section=.rodata --only-section=.data --only-section=.sdata --change-addresses -65536 "%BASE%.elf" "%BASE%.data.hex"
-"%OBJCOPY%" -O verilog --only-section=.rodata --only-section=.data --only-section=.sdata "%BASE%.elf" "%BASE%.data.hex"
+"%OBJCOPY%" -O verilog --only-section=.rodata --only-section=.data --only-section=.sdata --change-addresses -65536 "%BASE%.elf" "%BASE%.data.hex"
 if errorlevel 1 goto :error
 
 echo [4/4] Disassembling -^> %BASE%.dis ...

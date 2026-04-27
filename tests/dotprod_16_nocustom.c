@@ -9,6 +9,8 @@
  * Compile:  tools\build.bat tests\dotprod_16_nocustom.c
  */
 
+#include "validate.h"
+
 #define N 16
 
 int A[N] = { 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15,16 };
@@ -37,5 +39,9 @@ int main(void) {
     for (i = 0; i < N; i++)
         dot += sw_mul(A[i], B[i]);
     result = dot;
+    {
+        int r[1]; r[0] = result;
+        validate_write(BENCH_ID_DOTPROD_16_NOCUST, r, 1);
+    }
     return 0;
 }

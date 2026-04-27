@@ -29,7 +29,8 @@ module cpu_top_sc_rdcyc (
     input  wire        reset,
     output wire [31:0] o_pc,
     output wire [31:0] o_cycle_counter,
-    output wire [31:0] o_wb_data
+    output wire [31:0] o_wb_data,
+    output wire [31:0] o_instr_retired
 );
 
     // ================================================================
@@ -218,5 +219,7 @@ module cpu_top_sc_rdcyc (
     assign o_pc            = if_pc_out;
     assign o_cycle_counter = cycle_counter;
     assign o_wb_data       = wb_data;
+    // Single-cycle: every cycle retires one instruction.
+    assign o_instr_retired = cycle_counter;
 
 endmodule
