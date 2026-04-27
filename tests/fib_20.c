@@ -11,6 +11,8 @@
  * Compile:  tools\build.bat tests\fib_20.c
  */
 
+#include "validate.h"
+
 int fib_result;
 
 int main(void) {
@@ -22,5 +24,9 @@ int main(void) {
         b = tmp;
     }
     fib_result = a;   /* fib(20) = 6765 */
+    {
+        int r[1]; r[0] = fib_result;
+        validate_write(BENCH_ID_FIB_20, r, 1);
+    }
     return 0;
 }

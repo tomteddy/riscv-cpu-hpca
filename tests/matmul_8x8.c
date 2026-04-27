@@ -17,6 +17,7 @@
  */
 
 #include "../tools/custom_ops.h"
+#include "validate.h"
 
 #define N 8
 
@@ -53,6 +54,11 @@ int main(void) {
                 sum = mac3_custom(sum, A[i][k], B[k][j]);
             C[i][j] = sum;
         }
+    }
+    {
+        int r[8]; int j;
+        for (j = 0; j < 8; j++) r[j] = C[0][j];
+        validate_write(BENCH_ID_MATMUL_8X8, r, 8);
     }
     return 0;
 }

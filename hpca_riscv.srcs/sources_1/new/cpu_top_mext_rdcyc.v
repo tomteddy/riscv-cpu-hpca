@@ -32,7 +32,8 @@ module cpu_top_mext_rdcyc #(
     input  wire        reset,
     output wire [31:0] o_pc,           // current PC (IF stage)
     output wire [31:0] o_cycle_counter, // cycle counter (for RDCYC)
-    output wire [31:0] o_wb_data       // writeback data (keeps pipeline logic alive)
+    output wire [31:0] o_wb_data,       // writeback data (keeps pipeline logic alive)
+    output wire [31:0] o_instr_retired  // committed instruction count (for CPI)
 );
 
     // ================================================================
@@ -456,5 +457,41 @@ module cpu_top_mext_rdcyc #(
     assign o_pc            = if_pc_out;
     assign o_cycle_counter = cycle_counter;
     assign o_wb_data       = wb_data;
+
+    // ================================================================
+    //  Instructions-retired counter (Phase 4 validation harness)
+    //
+    //  Tracks a "valid" bit alongside each pipeline stage. A bubble
+    //  inserted by stall or flush has valid=0 and is not counted at WB.
+    // ================================================================
+    reg id_valid, ex_valid, mem_valid, wb_valid;
+    always @(posedge clk) begin
+        if (reset) begin
+            id_valid  <= 1'b0;
+            ex_valid  <= 1'b0;
+            mem_valid <= 1'b0;
+            wb_valid  <= 1'b0;
+        end else begin
+            // IF/ID: a stall freezes the same valid bit; a flush kills it;
+            // otherwise IF always produces a valid instruction.
+            if (flush_if_id)      id_valid <= 1'b0;
+            else if (!stall)      id_valid <= 1'b1;
+            // ID/EX: flush => bubble; stall => bubble (instr held in IF/ID)
+            if (flush_id_ex)      ex_valid <= 1'b0;
+            else if (stall)       ex_valid <= 1'b0;
+            else                  ex_valid <= id_valid;
+            // EX -> MEM -> WB: never flushed
+            mem_valid <= ex_valid;
+            wb_valid  <= mem_valid;
+        end
+    end
+
+    reg [31:0] instr_retired;
+    always @(posedge clk) begin
+        if (reset)         instr_retired <= 32'd0;
+        else if (wb_valid) instr_retired <= instr_retired + 32'd1;
+    end
+
+    assign o_instr_retired = instr_retired;
 
 endmodule

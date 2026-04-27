@@ -13,6 +13,7 @@
  */
 
 #include "../tools/custom_ops.h"
+#include "validate.h"
 
 #define N 16
 
@@ -27,5 +28,9 @@ int main(void) {
     for (i = 0; i < N; i++)
         dot = mac3_custom(dot, A[i], B[i]);
     result = dot;   /* store so compiler can't eliminate loop */
+    {
+        int r[1]; r[0] = result;
+        validate_write(BENCH_ID_DOTPROD_16, r, 1);
+    }
     return 0;
 }

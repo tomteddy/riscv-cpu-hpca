@@ -11,6 +11,8 @@
  * Compile:  tools\build.bat tests\matmul_8x8_nocustom.c
  */
 
+#include "validate.h"
+
 #define N 8
 
 int A[N][N] = {
@@ -63,6 +65,11 @@ int main(void) {
                 sum += sw_mul(A[i][k], B[k][j]);
             C[i][j] = sum;
         }
+    }
+    {
+        int r[8]; int jj;
+        for (jj = 0; jj < 8; jj++) r[jj] = C[0][jj];
+        validate_write(BENCH_ID_MATMUL_8X8_NOCUST, r, 8);
     }
     return 0;
 }
