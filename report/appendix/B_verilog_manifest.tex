@@ -1,0 +1,26 @@
+\chapter{Verilog File Manifest}
+\label{app:files}
+
+The complete Verilog source listing is bound as a separate volume per
+the assignment requirement. This appendix indexes each module by phase.
+
+\section*{Phase 0 — Single-Cycle Core}
+% pc, instruction_memory, control_unit, alu_control, alu, register_file,
+% immediate_gen, branch_unit, data_memory, writeback, cpu_top.
+
+\section*{Phase 1 — Pipeline}
+% if_id_reg, id_ex_reg, ex_mem_reg, mem_wb_reg,
+% forwarding_unit, hazard_unit, cpu_top_pipeline.
+
+\section*{Phase 2 — Branch Prediction}
+% btb, cpu_top_pipelined_branch.
+
+\section*{Phase 3 — M-Extension and Custom Ops}
+% mul_unit, cpu_top_mext.
+
+\section*{Phase 4 — RDCYC, 3-Operand MAC, Single-Cycle Top}
+% register_file_3p, cpu_top_mext_rdcyc, cpu_top_sc_rdcyc.
+
+\section*{Testbenches}
+% tb_cpu_top, tb_cpu_top_pipeline, tb_cpu_top_pipelined_branch,
+% tb_cpu_top_mext, tb_cpu_top_mext_rdcyc, tb_cpu_top_sc_rdcyc, plus unit TBs.

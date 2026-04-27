@@ -1,0 +1,72 @@
+\chapter{Processor Design and Implementation}
+\label{ch:design}
+
+This chapter consolidates the architectural design and Verilog
+implementation across all phases. Each subsystem is described in terms
+of its function, interface, and design decisions; cross-cutting
+verification status is summarised at the end.
+
+\section{Top-Level Block Diagram}
+% \begin{figure}[H]\centering\includegraphics[width=\textwidth]{toplevel_block}\caption{Top-level datapath of the pipelined RV32I processor.}\label{fig:toplevel}\end{figure}
+
+\section{Instruction Fetch (IF) Stage}
+\subsection{Program Counter}
+\subsection{Instruction Memory}
+\subsection{Branch Target Buffer}
+
+\section{Instruction Decode (ID) Stage}
+\subsection{Control Unit}
+\subsection{Immediate Generator}
+\subsection{Three-Port Register File}
+\subsection{WB$\rightarrow$ID Bypass}
+
+\section{Execute (EX) Stage}
+\subsection{ALU and ALU Control}
+\subsection{Branch Unit}
+\subsection{Multiplier and MAC Unit}
+\subsection{EX-Stage Result Mux and \texttt{ex\_op} Encoding}
+
+\section{Memory (MEM) Stage}
+\subsection{Data Memory Organisation}
+
+\section{Write-Back (WB) Stage}
+\subsection{Writeback Mux}
+\subsection{Cycle Counter and Instructions-Retired Counter}
+
+\section{Pipeline Registers}
+% IF/ID, ID/EX, EX/MEM, MEM/WB — fields, stall/flush behaviour.
+
+\section{Hazard Handling}
+\subsection{Forwarding Unit}
+% EX→EX, MEM→EX, WB→ID, plus rs3 forwarding for MAC.
+\subsection{Hazard / Stall Unit}
+% Load-use stall, MAC rs3 load-use stall.
+\subsection{Branch Misprediction Flush}
+
+\section{Branch Prediction Subsystem}
+\subsection{BTB Organisation (16-entry, direct-mapped)}
+\subsection{2-bit Saturating Counter FSM}
+\subsection{Update Policy and \texttt{USE\_BTB} Parameter}
+
+\section{Single-Cycle Reference Top-Level}
+% cpu_top_sc_rdcyc as comparison baseline.
+
+\section{Design-Decision Summary}
+% Bullet list of locked decisions (branch resolves in EX, NOP encoding, etc.).
+
+\section{Per-Phase Verification Status}
+Each phase was verified against its corresponding integration testbench
+before proceeding. Quantitative results are deferred to
+Chapter~\ref{ch:results}.
+\begin{itemize}
+  \item Phase~0 (single-cycle): all 47 RV32I instructions, register and
+        memory state checked. \textbf{PASS.}
+  \item Phase~1 (5-stage pipeline): identical expected state at termination,
+        120-cycle wait. \textbf{PASS.}
+  \item Phase~2 (+BTB): same checks; BTB hit/miss observed. \textbf{PASS.}
+  \item Phase~3 (+M-ext, custom-0): hand-assembled 13-instruction MAC
+        microbenchmark. \textbf{PASS.}
+  \item Phase~4 (+RDCYC, 3-op MAC): all nine benchmarks. \textbf{PASS.}
+  \item Phase~6 (validation harness): 27-run sweep
+        (9~benchmarks $\times$ 3~configs). \textbf{27/27 PASS.}
+\end{itemize}

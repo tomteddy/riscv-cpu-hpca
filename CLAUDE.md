@@ -690,6 +690,92 @@ All 27 runs verified PASS on 2026-04-27.
 
 ---
 
+## Phase 7 — Project Report (in progress) 📝
+
+LaTeX report for course submission. **TeXstudio + MiKTeX** environment, `report` document
+class, BibTeX (IEEEtran). Modular structure under `report/` — one `.tex` per chapter,
+wired by `report/main.tex`. **User writes the title page; everything else is in skeleton.**
+
+### Structural decisions (locked)
+
+- Per-phase design chapters (3–6) **merged** into one Chapter 4 (Design & Implementation).
+- Design and Results kept in **separate** chapters (not per-phase).
+- Assignment requires register dumps and simulation waveforms in results.
+
+### Skeleton already created
+
+```
+report/
+  main.tex                       # wires everything; packages, listings, hyperref, bibtex
+  refs.bib                       # starter entries: riscv-isa, patterson-hennessy, vivado-ug901, zynq-7000
+  frontmatter/{certificate,declaration,acknowledgements,abstract}.tex
+  chapters/01..09_*.tex          # all 9 chapter stubs with section/subsection scaffolding
+  appendix/{A_isa_encoding,B_verilog_manifest,C_build_sim_instructions}.tex
+```
+
+Chapter 4 stub lives at `report/chapters/04_processor_design.tex` with sections for
+top-level diagram, IF/ID/EX/MEM/WB stages, hazard handling, BTB, single-cycle reference,
+per-phase verification status.
+
+### TB modifications for waveforms + register dumps
+
+Both `tb_cpu_top_mext_rdcyc.v` and `tb_cpu_top_sc_rdcyc.v` were extended with:
+
+- `reg [1023:0] regdump_filename` (was [255:0] — was truncating long benchmark names).
+- End-of-run dump block: x0–x31, DMEM 0x3F00–0x3F7F, BTB final state (pipeline only),
+  final PC, cycles/retired/CPI → console + `regdump_<bench>_<config>.txt`.
+- **Per-stage PC + instruction mirrors** for waveform (proves multiple instructions in flight):
+  `w_pc_if`, `w_pc_id`, `w_pc_ex`, `w_alu_result_mem`, `w_wb_alu_result`.
+- **Compact slices** for waveform readability: pipeline TB uses `[6:0]` slices on those
+  five mirrors; SC TB uses `[8:0]` slices on `if_pc_out`, `if_instr`, `wb_data`,
+  `cycle_counter`, `o_instr_retired`.
+- Other waveform-friendly signals: `w_branch_taken`, `w_pred_taken`, `w_cycle_counter`,
+  `w_instr_retired`.
+
+**Correct hierarchical names** (gotchas hit during TB modification):
+- Branch signal is `uut.branch_taken` (no `ex_` prefix).
+- Pipeline register instances are `if_id`, `id_ex`, `ex_mem`, `mem_wb` (not `*_reg_inst`).
+
+**Vivado workflow note:** TB files added to a worktree must be registered via Vivado GUI
+(Add Sources → Add or create simulation sources) — otherwise `xil_defaultlib.tb_*` not
+found at elaborate. After editing a TB, **Relaunch Simulation** (not just Restart) for
+new wires to appear.
+
+### Waveform screenshots (final tally — 3 is enough)
+
+Comparison story lives in CSV tables (Phase 6), not waveforms. Screenshots only need to
+prove correctness of the three configurations.
+
+| # | Source | Shows |
+|---|--------|-------|
+| 1 | dotprod, PL+BTB, end-of-run zoomed view | BTB activity (`pred_taken` vs `branch_taken` 2 cycles apart), halt detect, cycle counter, instr_retired |
+| 2 | dotprod, PL+BTB, mid-run | All 5 pipeline stages active simultaneously (different PCs in IF/ID/EX/MEM/WB) — proves pipelining |
+| 3 | dotprod, single-cycle | One instruction per cycle, CPI=1 — SC verification |
+
+**Vivado 2020.2 has no native waveform image export** — Print is greyed out. Use
+**Snipping Tool (Win+Shift+S)** for capture.
+
+### Observations to fold into the report
+
+- **Load-use stall absent in benchmarks** — not a missing feature; GCC scheduler hides
+  load-use latency by reordering. Frame as a positive finding (compiler/microarch
+  cooperation), not a gap.
+- **Pred_taken (IF) and branch_taken (EX) are 2 cycles apart** because they live in
+  different pipeline stages — explains the alternating-bit pattern in waveforms.
+- **Branch flush vs load-use stall in waveforms:** zeros in ID/EX for 2 cycles = branch
+  flush; repeated PC in IF/ID for 1 cycle = load-use stall.
+
+### Report status
+
+- ✅ Skeleton + all chapter stubs created
+- ✅ TB modifications complete; 3 final screenshots captured
+- ✅ All 27 validation runs PASS, results.csv populated
+- ⏳ **Drafting chapters** — not started yet. Recommended order: Ch.4 (Design) first
+  while details are fresh, then Ch.5 (Verification), Ch.6 (Synthesis), Ch.7 (Results),
+  Ch.1 (Intro), Ch.2 (Background), Ch.3 (ISA), Ch.8 (Discussion), Ch.9 (Conclusion).
+
+---
+
 ## Roadmap
 
 - **Phase 0** ✅ Single-cycle RV32I, all 47 instructions (`cpu_top.v`)

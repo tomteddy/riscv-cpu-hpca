@@ -1,0 +1,29 @@
+\chapter{Toolchain and Test Programs}
+\label{ch:toolchain}
+
+\section{RISC-V GCC Cross-Compilation Flow}
+% riscv64-unknown-elf, -march=rv32i -mabi=ilp32 -nostdlib.
+
+\section{Linker Script and Startup}
+% link.ld layout, startup.S sets sp = 0x4000.
+
+\section{Custom-Op Inline Assembly Wrappers}
+% custom_ops.S / custom_ops.h.
+
+\section{Build Pipeline (\texttt{tools/build.bat})}
+% Steps: gcc → ld → objcopy --change-addresses → hex split.
+
+\section{Hand-Assembled Test Program}
+\subsection{Assembly Listing}
+% \begin{lstlisting}[language=RISCV] ... \end{lstlisting}
+\subsection{Manual Encoding to Machine Code}
+% Show 1-2 instructions encoded by hand to demonstrate format mastery.
+\subsection{Instruction Memory and Data Memory Loading}
+% $readmemh, instructions.hex, data.hex, PC reset to 0x0.
+
+\section{Benchmark Suite}
+\subsection{fib\_20}
+\subsection{dotprod\_16 (custom and no-custom)}
+\subsection{matmul\_8x8 (custom and no-custom)}
+\subsection{relu\_32 (custom and no-custom)}
+\subsection{grad\_descent (custom and no-custom)}

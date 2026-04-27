@@ -1,0 +1,28 @@
+\chapter{FPGA Synthesis and Timing Analysis}
+\label{ch:synth}
+
+\section{Target Platform}
+% Zynq Z-7020, Zybo Z2, Vivado 2020.2.
+
+\section{Code Changes for Synthesis}
+\subsection{Memory Restructuring (4 Byte-Banks)}
+\subsection{Output Ports to Prevent Logic Trimming}
+\subsection{Clock Constraint (\texttt{constraints.xdc})}
+
+\section{Synthesis Flow}
+% Tcl commands, report_timing_summary, report_utilization.
+
+\section{Resource Utilisation}
+% Table: SC vs Pipeline LUT/FF/DSP/LUTRAM.
+
+\section{Timing Results}
+\subsection{Single-Cycle WNS and Critical Path}
+\subsection{Pipeline WNS and Critical Path}
+\subsection{Why the SC Max-Frequency Figure is Misleading}
+% Combinational IMEM start-point, unconstrained MAC path.
+
+\section{Real Execution Time Estimates}
+% cycles × clock period; both designs evaluated at 15.683 ns.
+
+\section{Pipeline Negation by Single-Cycle Multiplier}
+% The slowest-stage rule and its consequence here.

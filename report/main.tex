@@ -1,0 +1,99 @@
+% =============================================================
+%  RV32I Pipelined Processor — Project Report
+%  Compile: pdflatex → bibtex → pdflatex → pdflatex
+% =============================================================
+\documentclass[12pt,a4paper,oneside]{report}
+
+% ---- Packages ----
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{siunitx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{tikz}
+\usepackage{float}
+\usepackage[hidelinks]{hyperref}
+
+\graphicspath{{figures/}}
+
+% ---- Listings styles for Verilog / C / RISC-V asm ----
+\definecolor{codegray}{rgb}{0.95,0.95,0.95}
+\definecolor{codekw}{rgb}{0.0,0.0,0.6}
+\definecolor{codecmt}{rgb}{0.25,0.5,0.35}
+\definecolor{codestr}{rgb}{0.6,0.0,0.0}
+
+\lstdefinestyle{base}{
+  backgroundcolor=\color{codegray},
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecmt}\itshape,
+  stringstyle=\color{codestr},
+  numbers=left, numberstyle=\tiny\color{gray},
+  breaklines=true, frame=single, captionpos=b, tabsize=2,
+}
+\lstdefinelanguage{Verilog}{
+  morekeywords={module,endmodule,input,output,inout,wire,reg,assign,always,
+    posedge,negedge,if,else,begin,end,case,endcase,default,parameter,localparam,
+    initial,for,while,integer,function,endfunction,task,endtask,generate,endgenerate},
+  morecomment=[l]{//}, morecomment=[s]{/*}{*/}, morestring=[b]"
+}
+\lstdefinelanguage{RISCV}{
+  morekeywords={addi,add,sub,and,or,xor,sll,srl,sra,slt,sltu,
+    lw,sw,lb,lh,sb,sh,beq,bne,blt,bge,bltu,bgeu,jal,jalr,lui,auipc,
+    mul,mac,relu,rdcyc,nop,li,la,ret,ecall},
+  sensitive=true, morecomment=[l]{\#}, morestring=[b]"
+}
+\lstset{style=base}
+
+% ---- Document metadata ----
+\title{Design and Implementation of a Pipelined RV32I Processor\\
+       with Branch Prediction and Custom ML Instructions}
+\author{Vishnu Dheepak}
+\date{\today}
+
+% =============================================================
+\begin{document}
+
+% ---- Title page (you provide separately) ----
+% \input{frontmatter/titlepage}
+
+\input{frontmatter/certificate}
+\input{frontmatter/declaration}
+\input{frontmatter/acknowledgements}
+\input{frontmatter/abstract}
+
+\tableofcontents
+\listoffigures
+\listoftables
+
+% ============================================================
+\input{chapters/01_introduction}
+\input{chapters/02_background}
+\input{chapters/03_isa_design}
+\input{chapters/04_processor_design}
+\input{chapters/05_toolchain_test_program}
+\input{chapters/06_verification_validation}
+\input{chapters/07_synthesis_timing}
+\input{chapters/08_results_analysis}
+\input{chapters/09_conclusion_future_work}
+
+% ---- Bibliography ----
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+
+% ---- Appendices ----
+\appendix
+\input{appendix/A_isa_encoding}
+\input{appendix/B_verilog_manifest}
+\input{appendix/C_build_sim_instructions}
+
+\end{document}

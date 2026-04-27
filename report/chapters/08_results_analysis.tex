@@ -1,0 +1,31 @@
+\chapter{Results and Analysis}
+\label{ch:results}
+
+\section{Functional Correctness}
+% 27/27 PASS — already established in Ch.\ref{ch:verif}; reference table.
+
+\section{Cycle Counts and CPI Across Configurations}
+% Table A: SC / PL+BTB / PL no-BTB.
+
+\section{BTB Speedup}
+% Table B: pipeline+BTB vs pipeline-no-BTB.
+
+\section{Custom-Instruction Speedup}
+\subsection{MAC Speedup on dotprod, matmul, grad\_descent}
+\subsection{The relu\_32 Anomaly}
+% Why custom is slower here — JAL/RET overhead.
+
+\section{Real-Time Performance from Synthesis}
+% cycles × 15.683 ns.
+
+\section{Pipeline-Negation Root Cause}
+% Multiplier-bound critical path — links Ch.\ref{ch:synth} to cycle-time analysis.
+
+\section{Summary of Findings}
+\begin{itemize}
+  \item All 27 (benchmark, config) runs functionally correct.
+  \item MAC delivers up to $3.45\times$ speedup over software multiply.
+  \item BTB delivers up to $1.33\times$ speedup on branch-heavy code.
+  \item Pipeline real-time is bottlenecked by the single-cycle multiplier;
+        SC and pipeline have approximately equal true clock periods.
+\end{itemize}

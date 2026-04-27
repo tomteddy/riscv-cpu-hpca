@@ -1,0 +1,25 @@
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+\thispagestyle{empty}
+
+% TODO: ~250-word abstract. Skeleton below.
+This report presents the design, implementation, and analysis of a 5-stage
+pipelined RV32I processor in Verilog, targeted at the Xilinx Zynq Z-7020
+(Zybo Z2) FPGA. The processor implements the full RV32I base integer
+instruction set, the M-extension \texttt{MUL} instruction, and three custom
+machine-learning–oriented instructions on the RISC-V \texttt{custom-0}
+opcode: a three-operand multiply--accumulate (\texttt{MAC}), a rectified
+linear unit (\texttt{RELU}), and a cycle-counter read (\texttt{RDCYC}).
+The design is verified across three configurations
+(single-cycle, pipeline without branch prediction, pipeline with a
+16-entry BTB and 2-bit saturating predictor) on a suite of nine
+benchmarks. Functional correctness is established by an automated
+27-run validation harness; performance is reported in terms of
+instructions retired, CPI, and post-synthesis-derived real execution
+time. The custom MAC instruction achieves up to $3.45\times$ speedup
+over the software-multiply baseline. Synthesis-based timing analysis
+reveals that the single-cycle combinational multiplier dominates the
+pipeline's critical path, motivating a multi-stage pipelined multiplier
+as future work.
+
+\clearpage

@@ -177,12 +177,48 @@ module tb_cpu_top_mext_rdcyc;
     //  Main flow
     // ================================================================
     integer cycle_count, fd, k;
+    integer rd_fd, ri;
     reg [31:0] start_cycle, end_cycle;
     reg [31:0] start_retired, end_retired;
     reg [31:0] elapsed_cycles, elapsed_retired;
     reg [31:0] magic, id, n_results, actual, expv;
     reg        all_ok;
     reg [255:0] config_str;
+    reg [1023:0] regdump_filename;
+
+    // ---- Waveform-friendly top-level mirrors of internal CPU signals ----
+    // These wires show up at TB scope so they can be added to the Vivado
+    // waveform viewer in one click and grouped together for screenshots.
+    // Per-stage PC + instruction (proves multiple instrs in flight) ----------
+    wire [31:0] w_pc_if         = uut.if_pc_out;
+    wire [31:0] w_instr_if      = uut.if_instr;
+    wire [31:0] w_pc_id         = uut.if_id.id_pc;
+    wire [31:0] w_instr_id      = uut.if_id.id_instr;
+    wire [31:0] w_pc_ex         = uut.id_ex.ex_pc;
+    wire [31:0] w_alu_result_ex = uut.ex_alu_result;
+    wire [31:0] w_alu_result_mem= uut.ex_mem.mem_alu_result;
+    wire [31:0] w_wb_alu_result = uut.mem_wb.wb_alu_result;
+
+    // ---- Narrow slices for compact waveform display (low 7 bits) ----
+    wire [6:0] w_pc_if_s   = uut.if_pc_out[6:0];
+    wire [6:0] w_pc_id_s   = uut.if_id.id_pc[6:0];
+    wire [6:0] w_pc_ex_s   = uut.id_ex.ex_pc[6:0];
+    wire [15:0] w_alu_mem_s = uut.ex_mem.mem_alu_result[15:0];
+    wire [15:0] w_wb_alu_s  = uut.mem_wb.wb_alu_result[15:0];
+    
+    wire [6:0] w_cycle_counter_s = uut.cycle_counter[6:0];
+    wire [6:0] w_instr_retired_s = uut.instr_retired[6:0];
+
+    // Aliases retained for backwards compatibility / shorthand
+    wire [31:0] w_pc            = uut.if_pc_out;
+    wire [31:0] w_instr         = uut.if_instr;
+    wire [31:0] w_alu_result    = uut.ex_alu_result;
+    wire [31:0] w_wb_data       = uut.wb_data;
+    wire        w_branch_taken  = uut.branch_taken;
+    wire        w_pred_taken    = uut.id_predicted_taken;
+    wire [31:0] w_cycle_counter = uut.cycle_counter;
+    wire [31:0] w_instr_retired = uut.instr_retired;
+    wire        w_halted        = halted;
 
     initial begin
         load_data_hex();
@@ -296,6 +332,96 @@ module tb_cpu_top_mext_rdcyc;
         end else begin
             $display("WARN: could not open results.csv for append");
         end
+
+        // ============================================================
+        //  Comprehensive end-of-run dump (console + per-run .txt file)
+        // ============================================================
+        $sformat(regdump_filename, "regdump_%0s_%0s.txt", bench_name[id], config_str);
+        rd_fd = $fopen(regdump_filename, "w");
+
+        $display("");
+        $display("============================================================");
+        $display("  END-OF-RUN STATE DUMP");
+        $display("============================================================");
+        $display("Benchmark      : %0s", bench_name[id]);
+        $display("Config         : %0s", config_str);
+        $display("Final PC       : 0x%08h", uut.if_pc_out);
+        $display("Cycles         : %0d", elapsed_cycles);
+        $display("Instr retired  : %0d", elapsed_retired);
+        if (elapsed_retired > 0)
+            $display("CPI x1000      : %0d", (elapsed_cycles * 1000) / elapsed_retired);
+        $display("Result         : %0s", all_ok ? "PASS" : "FAIL");
+
+        if (rd_fd) begin
+            $fwrite(rd_fd, "# Run dump — benchmark=%0s config=%0s\n",
+                    bench_name[id], config_str);
+            $fwrite(rd_fd, "# final_pc=0x%08h\n", uut.if_pc_out);
+            $fwrite(rd_fd, "# cycles=%0d instr_retired=%0d cpi_x1000=%0d result=%0s\n",
+                    elapsed_cycles, elapsed_retired,
+                    (elapsed_retired > 0) ? (elapsed_cycles * 1000) / elapsed_retired : 0,
+                    all_ok ? "PASS" : "FAIL");
+        end
+
+        // ---- Register file (x0..x31) ----
+        $display("");
+        $display("Register file:");
+        $display("  reg | hex        | signed");
+        $display("  ----+------------+------------");
+        for (ri = 0; ri < 32; ri = ri + 1)
+            $display("  x%-2d | 0x%08h | %0d", ri,
+                     uut.reg_file.registers[ri],
+                     $signed(uut.reg_file.registers[ri]));
+        if (rd_fd) begin
+            $fwrite(rd_fd, "\n# --- register file ---\n");
+            for (ri = 0; ri < 32; ri = ri + 1)
+                $fwrite(rd_fd, "x%0d 0x%08h %0d\n", ri,
+                        uut.reg_file.registers[ri],
+                        $signed(uut.reg_file.registers[ri]));
+        end
+
+        // ---- Validation block + DMEM region (0x3F00..0x3F7F = 32 words) ----
+        $display("");
+        $display("DMEM[0x3F00..0x3F7F] (validation block + payload):");
+        $display("  addr       | hex        | signed");
+        $display("  -----------+------------+------------");
+        if (rd_fd) $fwrite(rd_fd, "\n# --- dmem 0x3F00..0x3F7F ---\n");
+        for (ri = 0; ri < 32; ri = ri + 1) begin
+            actual = dmem_word(VALIDATE_BASE_BYTE + 4*ri);
+            $display("  0x%08h | 0x%08h | %0d",
+                     VALIDATE_BASE_BYTE + 4*ri, actual, $signed(actual));
+            if (rd_fd)
+                $fwrite(rd_fd, "0x%08h 0x%08h %0d\n",
+                        VALIDATE_BASE_BYTE + 4*ri, actual, $signed(actual));
+        end
+
+        // ---- BTB final state (pipeline+BTB only) ----
+        if (USE_BTB) begin
+            $display("");
+            $display("BTB final state (16 entries):");
+            $display("  idx | v | counter | tag        | target");
+            $display("  ----+---+---------+------------+-----------");
+            if (rd_fd) $fwrite(rd_fd, "\n# --- btb final state ---\n");
+            for (ri = 0; ri < 16; ri = ri + 1) begin
+                $display("  %2d  | %0d | %02b      | 0x%07h  | 0x%08h", ri,
+                    uut.branch_predictor.valid[ri],
+                    uut.branch_predictor.counter[ri],
+                    uut.branch_predictor.tag[ri],
+                    uut.branch_predictor.target[ri]);
+                if (rd_fd)
+                    $fwrite(rd_fd, "btb%0d v=%0d cnt=%02b tag=0x%07h tgt=0x%08h\n", ri,
+                        uut.branch_predictor.valid[ri],
+                        uut.branch_predictor.counter[ri],
+                        uut.branch_predictor.tag[ri],
+                        uut.branch_predictor.target[ri]);
+            end
+        end
+
+        if (rd_fd) begin
+            $fclose(rd_fd);
+            $display("");
+            $display("Run dump written to %0s", regdump_filename);
+        end
+        $display("============================================================");
 
         $finish;
     end

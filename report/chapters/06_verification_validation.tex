@@ -1,0 +1,32 @@
+\chapter{Verification and Validation}
+\label{ch:verif}
+
+\section{Testbench Architecture}
+% Self-checking TB pattern, halt detection via beq x0,x0,0.
+
+\section{Validation Block Convention}
+% validate_write(id, results, n) at DMEM byte 0x3F00.
+% Magic 0xBEEF0000|id, count, payload.
+
+\section{Expected-Results Table}
+% Analytically-derived expected values for each benchmark.
+
+\section{Instructions-Retired Counter and CPI}
+% Valid-bit pipeline propagation; SC has CPI = 1.000 by construction.
+
+\section{27-Run Automated Sweep}
+% tools/run_all.tcl, results.csv columns.
+
+\section{Functional Correctness Results}
+% 27/27 PASS table.
+
+\section{Register-File Dump (End of Execution)}
+% Per-benchmark x0..x31 contents, captured by the testbench.
+% \input{tables/regdump_fib_20}  % auto-generated table
+
+\section{Simulation Waveforms}
+% Key signals: clk, reset, pc, instr, ex_op, alu_result, wb_data,
+% branch_taken, predicted_taken, halted.
+% \begin{figure}[H]\includegraphics[width=\textwidth]{wave_fib_20}
+%   \caption{Simulation waveform — fib\_20 benchmark, pipeline + BTB.}
+% \end{figure}

@@ -108,11 +108,28 @@ module tb_cpu_top_sc_rdcyc;
     endtask
 
     integer cycle_count, fd, k;
+    integer rd_fd, ri;
     reg [31:0] start_cycle, end_cycle;
     reg [31:0] start_retired, end_retired;
     reg [31:0] elapsed_cycles, elapsed_retired;
     reg [31:0] magic, id, n_results, actual, expv;
     reg        all_ok;
+    reg [1023:0] regdump_filename;
+
+    // ---- Waveform-friendly mirrors of internal CPU signals ----
+    wire [31:0] w_pc            = uut.if_pc_out;
+    wire [31:0] w_instr         = uut.if_instr;
+    wire [31:0] w_wb_data       = uut.wb_data;
+    wire [31:0] w_cycle_counter = uut.cycle_counter;
+    wire [31:0] w_instr_retired = uut.o_instr_retired;
+    
+    wire [8:0] w_pc_s            = uut.if_pc_out[8:0];
+    wire [8:0] w_instr_s         = uut.if_instr[8:0];
+    wire [8:0] w_wb_data_s       = uut.wb_data[8:0];
+    wire [8:0] w_cycle_counter_s = uut.cycle_counter[8:0];
+    wire [8:0] w_instr_retired_s = uut.o_instr_retired[8:0];
+    
+    wire        w_halted        = halted;
 
     initial begin
         load_data_hex();
@@ -217,6 +234,73 @@ module tb_cpu_top_sc_rdcyc;
         end else begin
             $display("WARN: could not open results.csv for append");
         end
+
+        // ============================================================
+        //  Comprehensive end-of-run dump (console + per-run .txt file)
+        // ============================================================
+        $sformat(regdump_filename, "regdump_%0s_single_cycle.txt", bench_name[id]);
+        rd_fd = $fopen(regdump_filename, "w");
+
+        $display("");
+        $display("============================================================");
+        $display("  END-OF-RUN STATE DUMP");
+        $display("============================================================");
+        $display("Benchmark      : %0s", bench_name[id]);
+        $display("Config         : single_cycle");
+        $display("Final PC       : 0x%08h", uut.if_pc_out);
+        $display("Cycles         : %0d", elapsed_cycles);
+        $display("Instr retired  : %0d", elapsed_retired);
+        if (elapsed_retired > 0)
+            $display("CPI x1000      : %0d", (elapsed_cycles * 1000) / elapsed_retired);
+        $display("Result         : %0s", all_ok ? "PASS" : "FAIL");
+
+        if (rd_fd) begin
+            $fwrite(rd_fd, "# Run dump — benchmark=%0s config=single_cycle\n", bench_name[id]);
+            $fwrite(rd_fd, "# final_pc=0x%08h\n", uut.if_pc_out);
+            $fwrite(rd_fd, "# cycles=%0d instr_retired=%0d cpi_x1000=%0d result=%0s\n",
+                    elapsed_cycles, elapsed_retired,
+                    (elapsed_retired > 0) ? (elapsed_cycles * 1000) / elapsed_retired : 0,
+                    all_ok ? "PASS" : "FAIL");
+        end
+
+        // ---- Register file ----
+        $display("");
+        $display("Register file:");
+        $display("  reg | hex        | signed");
+        $display("  ----+------------+------------");
+        for (ri = 0; ri < 32; ri = ri + 1)
+            $display("  x%-2d | 0x%08h | %0d", ri,
+                     uut.reg_file.registers[ri],
+                     $signed(uut.reg_file.registers[ri]));
+        if (rd_fd) begin
+            $fwrite(rd_fd, "\n# --- register file ---\n");
+            for (ri = 0; ri < 32; ri = ri + 1)
+                $fwrite(rd_fd, "x%0d 0x%08h %0d\n", ri,
+                        uut.reg_file.registers[ri],
+                        $signed(uut.reg_file.registers[ri]));
+        end
+
+        // ---- DMEM 0x3F00..0x3F7F ----
+        $display("");
+        $display("DMEM[0x3F00..0x3F7F] (validation block + payload):");
+        $display("  addr       | hex        | signed");
+        $display("  -----------+------------+------------");
+        if (rd_fd) $fwrite(rd_fd, "\n# --- dmem 0x3F00..0x3F7F ---\n");
+        for (ri = 0; ri < 32; ri = ri + 1) begin
+            actual = dmem_word(VALIDATE_BASE_BYTE + 4*ri);
+            $display("  0x%08h | 0x%08h | %0d",
+                     VALIDATE_BASE_BYTE + 4*ri, actual, $signed(actual));
+            if (rd_fd)
+                $fwrite(rd_fd, "0x%08h 0x%08h %0d\n",
+                        VALIDATE_BASE_BYTE + 4*ri, actual, $signed(actual));
+        end
+
+        if (rd_fd) begin
+            $fclose(rd_fd);
+            $display("");
+            $display("Run dump written to %0s", regdump_filename);
+        end
+        $display("============================================================");
 
         $finish;
     end

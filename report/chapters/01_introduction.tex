@@ -1,0 +1,26 @@
+\chapter{Introduction}
+\label{ch:intro}
+
+\section{Motivation}
+% Why RISC-V, why pipelining, why custom ML ops on edge CPUs.
+
+\section{Problem Statement}
+% Restate the assignment in academic prose.
+
+\section{Objectives}
+\begin{itemize}
+  \item Design a 5-stage pipelined RV32I-like processor in Verilog.
+  \item Implement RAW-hazard handling via data forwarding plus stalls.
+  \item Improve performance with a BTB-based dynamic branch predictor.
+  \item Extend the ISA with custom ML-oriented instructions
+        (\texttt{MAC}, \texttt{RELU}, \texttt{RDCYC}).
+  \item Verify functionally and analyse performance against single-cycle
+        and pipeline-without-BTB baselines.
+  \item Synthesise on Zynq Z-7020 and analyse post-synthesis timing.
+\end{itemize}
+
+\section{Scope and Contributions}
+% Bullet list of contributions.
+
+\section{Report Organisation}
+% One-paragraph roadmap of remaining chapters.
